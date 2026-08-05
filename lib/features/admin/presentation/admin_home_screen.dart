@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
@@ -210,7 +210,7 @@ class _UsersTabState extends State<_UsersTab> {
                                 style: const TextStyle(fontWeight: FontWeight.bold)),
                           ],
                         ),
-                        if (!user.isAdmin) ...[
+                        if (user.role != UserRole.admin) ...[
                           const Divider(),
                           _PermissionSwitch(
                             label: 'تصدير',
