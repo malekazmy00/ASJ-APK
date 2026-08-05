@@ -7,6 +7,14 @@ workflows:
       groups:
         - supabase
     scripts:
+      - name: التحقق من المتغيرات قبل أي حاجة
+        script: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "خطأ فادح: SUPABASE_URL أو SUPABASE_ANON_KEY فاضيين أو مش موجودين."
+            echo "راجع Codemagic > Environment variables > تأكد إنهم مضافين تحت Group اسمه supabase بالظبط."
+            exit 1
+          fi
+          echo "المتغيرات موجودة، SUPABASE_URL يبدأ بـ: $(echo $SUPABASE_URL | cut -c1-25)..."
       - name: توليد مجلدات المنصة الناقصة
         script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
       - name: إضافة صلاحية الكاميرا
@@ -17,7 +25,16 @@ workflows:
           fi
       - name: تثبيت الحزم
         script: flutter pub get
+      - name: فحص شامل للكود قبل البناء
+        script: |
+          flutter analyze --no-fatal-infos || {
+            echo "فيه أخطاء في الكود ظاهرة فوق - البناء هيتوقف هنا قبل ما ياخد وقت إضافي."
+            exit 1
+          }
       - name: بناء APK
-        script: flutter build apk --release --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+        script: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
