@@ -1,0 +1,29 @@
+workflows:
+  android-apk:
+    name: ASJ Android APK
+    max_build_duration: 30
+    environment:
+      flutter: stable
+      groups:
+        - supabase
+    scripts:
+      - name: توليد مجلدات المنصة (android/ios) الناقصة
+        script: |
+          # المشروع مكتوب يدوياً بدون `flutter create`، فمجلد android/ غير
+          # موجود أصلاً. هذا الأمر آمن يولّد فقط الملفات الناقصة بدون لمس
+          # lib/ أو pubspec.yaml الحاليين.
+          flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical --overwrite=false
+      - name: إضافة صلاحية الكاميرا (مطلوبة لتحليل القطعة بالصورة)
+        script: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.CAMERA' "$MANIFEST" || \
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.CAMERA" />' "$MANIFEST"
+      - name: تثبيت الحزم
+        script: flutter pub get
+      - name: بناء APK
+        script: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
