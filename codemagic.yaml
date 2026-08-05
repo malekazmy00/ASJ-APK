@@ -4,14 +4,13 @@ workflows:
     max_build_duration: 30
     environment:
       flutter: stable
+      groups:
+        - supabase
     scripts:
       - name: توليد مجلدات المنصة (android/ios) الناقصة
         script: |
-          # المشروع مكتوب يدوياً بدون `flutter create`، فمجلد android/ غير
-          # موجود أصلاً. هذا الأمر آمن يولّد فقط الملفات الناقصة بدون لمس
-          # lib/ أو pubspec.yaml الحاليين.
           flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical --overwrite=false
-      - name: إضافة صلاحية الكاميرا (مطلوبة لتحليل القطعة بالصورة)
+      - name: إضافة صلاحية الكاميرا
         script: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.CAMERA' "$MANIFEST" || \
