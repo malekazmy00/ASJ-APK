@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/config/supabase_config.dart';
@@ -17,8 +17,8 @@ Future<void> main() async {
           padding: const EdgeInsets.all(16),
           child: SingleChildScrollView(
             child: Text(
-              details.exceptionAsString(),
-              style: const TextStyle(color: Colors.red, fontSize: 12),
+              '${details.exceptionAsString()}\n\n${details.stack}',
+              style: const TextStyle(color: Colors.red, fontSize: 10),
               textDirection: TextDirection.ltr,
             ),
           ),
@@ -49,6 +49,11 @@ class AsjApp extends ConsumerWidget {
       routerConfig: router,
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
     );
   }
 }
