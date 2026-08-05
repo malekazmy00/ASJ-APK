@@ -9,7 +9,7 @@ workflows:
     scripts:
       - name: توليد مجلدات المنصة (android/ios) الناقصة
         script: |
-          flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical --overwrite=false
+          flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
       - name: إضافة صلاحية الكاميرا
         script: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
