@@ -17,6 +17,9 @@ workflows:
           echo "المتغيرات موجودة، SUPABASE_URL يبدأ بـ: $(echo $SUPABASE_URL | cut -c1-25)..."
       - name: توليد مجلدات المنصة الناقصة
         script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
+      - name: تنظيف ملف الاختبار الافتراضي
+        script: |
+          rm -f test/widget_test.dart
       - name: إضافة صلاحية الكاميرا
         script: |
           if ! grep -q 'CAMERA' android/app/src/main/AndroidManifest.xml; then
