@@ -26,8 +26,6 @@ class AuthController extends StateNotifier<AppUser?> {
       );
       state = user;
       if (user != null) {
-        // لا نوقف تسجيل الدخول لو فشل تسجيل الجلسة لسبب ما (مثلاً الجدول
-        // لسه ما اتعملوش SQL migration) - الأولوية لدخول المستخدم.
         try {
           _currentSessionId = await _sessionRepo.openSession(user.username);
         } catch (_) {
@@ -36,7 +34,9 @@ class AuthController extends StateNotifier<AppUser?> {
       }
       return user != null;
     } catch (e) {
-      errorMessage = 'فشل تسجيل الدخول، تأكد من اسم المستخدم وكلمة المرور';
+      // مؤقت للتشخيص: بنوري تفاصيل الخطأ الحقيقي بدل رسالة عامة، عشان
+      // نعرف السبب الفعلي (شبكة/رابط غلط/مفتاح غلط) بدل التخمين.
+      errorMessage = 'فشل تسجيل الدخول: $e';
       return false;
     } finally {
       isLoading = false;
