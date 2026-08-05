@@ -20,11 +20,16 @@ workflows:
       - name: تنظيف ملف الاختبار الافتراضي
         script: |
           rm -f test/widget_test.dart
-      - name: إضافة صلاحية الكاميرا
+      - name: إضافة صلاحيات الكاميرا والإنترنت
         script: |
-          if ! grep -q 'CAMERA' android/app/src/main/AndroidManifest.xml; then
-            awk '{print} /<manifest / && !x {print "    <uses-permission android:name=\"android.permission.CAMERA\" />"; x=1}' android/app/src/main/AndroidManifest.xml > /tmp/manifest.xml
-            mv /tmp/manifest.xml android/app/src/main/AndroidManifest.xml
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            awk '{print} /<manifest / && !y {print "    <uses-permission android:name=\"android.permission.INTERNET\" />"; y=1}' "$MANIFEST" > /tmp/manifest2.xml
+            mv /tmp/manifest2.xml "$MANIFEST"
+          fi
+          if ! grep -q 'CAMERA' "$MANIFEST"; then
+            awk '{print} /<manifest / && !x {print "    <uses-permission android:name=\"android.permission.CAMERA\" />"; x=1}' "$MANIFEST" > /tmp/manifest.xml
+            mv /tmp/manifest.xml "$MANIFEST"
           fi
       - name: تثبيت الحزم
         script: flutter pub get
