@@ -7,20 +7,13 @@ workflows:
       groups:
         - supabase
     scripts:
-      - name: توليد مجلدات المنصة (android/ios) الناقصة
-        script: |
-          flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
+      - name: توليد مجلدات المنصة الناقصة
+        script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
       - name: إضافة صلاحية الكاميرا
-        script: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          grep -q 'android.permission.CAMERA' "$MANIFEST" || \
-            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.CAMERA" />' "$MANIFEST"
+        script: grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml || sed -i -E 's|(<manifest[^>]*>)|\1\n    <uses-permission android:name="android.permission.CAMERA" />|' android/app/src/main/AndroidManifest.xml
       - name: تثبيت الحزم
         script: flutter pub get
       - name: بناء APK
-        script: |
-          flutter build apk --release \
-            --dart-define=SUPABASE_URL=$SUPABASE_URL \
-            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+        script: flutter build apk --release --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
