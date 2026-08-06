@@ -10,6 +10,7 @@ import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
+import '../../../core/widgets/barcode_scanner_page.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// محتوى شاشة الإدخال - تبويب داخل الشاشة الموحّدة (role_home_screen.dart).
@@ -277,9 +278,19 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
               TextField(
                 controller: _inputController,
                 textAlign: TextAlign.right,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'رقم القطعة أو وصفها (اختياري لو مرفقة صورة)',
                   hintText: 'مثال: 5199650 أو "بوردة تغذية سيمنس"',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.qr_code_scanner),
+                    tooltip: 'مسح باركود',
+                    onPressed: () async {
+                      final code = await scanBarcode(context);
+                      if (code != null && code.isNotEmpty) {
+                        _inputController.text = code;
+                      }
+                    },
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
