@@ -40,6 +40,23 @@ enum QueryReason {
   final String dbValue;
 }
 
+/// حالة ملكية القطعة وقت الإدخال (عمود جديد: ownership_status).
+enum OwnershipStatus {
+  owned('Owned', 'ملك لينا'),
+  maintenance('Maintenance', 'صيانة'),
+  custody('Custody', 'أمانة'),
+  trial('Trial', 'تجربة');
+
+  const OwnershipStatus(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static OwnershipStatus fromDb(String? value) => OwnershipStatus.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => OwnershipStatus.owned,
+      );
+}
+
 enum QueryStatus {
   pending('Pending', 'قيد الانتظار'),
   fulfilled('Fulfilled', 'تم التنفيذ'),
