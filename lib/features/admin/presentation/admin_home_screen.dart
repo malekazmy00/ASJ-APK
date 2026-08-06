@@ -1,84 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/app_user.dart';
 import '../../../core/models/notification.dart';
 import '../../../core/repositories/user_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
-import '../../auth/presentation/auth_providers.dart';
-import '../../inventory_summary/presentation/inventory_summary_screen.dart';
-import '../../item_timeline/presentation/item_timeline_screen.dart';
-import '../../user_activity/presentation/user_activity_screen.dart';
-
-/// لوحة الأدمن: 5 تبويبات — المستخدمون (صلاحيات + إضافة)، الإشعارات،
-/// الداشبورد التجميعي (المرحلة 3)، تتبع قطعة عبر الزمن (المرحلة 3)،
-/// تتبع جلسات/أعمال مستخدم (المرحلة 3). ناقص لسه: استيراد قاعدة
-/// المعرفة CSV والإحصائيات (راجع PROJECT_PLAN.md §7.1).
-class AdminHomeScreen extends ConsumerStatefulWidget {
-  const AdminHomeScreen({super.key});
-
-  @override
-  ConsumerState<AdminHomeScreen> createState() => _AdminHomeScreenState();
-}
-
-class _AdminHomeScreenState extends ConsumerState<AdminHomeScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 5, vsync: this);
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('لوحة الأدمن'),
-        backgroundColor: AppColors.roleAdmin,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          tabs: const [
-            Tab(text: 'المستخدمون', icon: Icon(Icons.people_outline)),
-            Tab(text: 'الإشعارات', icon: Icon(Icons.notifications_outlined)),
-            Tab(text: 'المخزون', icon: Icon(Icons.inventory_2_outlined)),
-            Tab(text: 'تتبع قطعة', icon: Icon(Icons.timeline_outlined)),
-            Tab(text: 'تتبع مستخدم', icon: Icon(Icons.person_search_outlined)),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
-          ),
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: const [
-          _UsersTab(),
-          _NotificationsTab(),
-          InventorySummaryScreen(),
-          ItemTimelineScreen(),
-          UserActivityScreen(),
-        ],
-      ),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------
-class _UsersTab extends StatefulWidget {
-  const _UsersTab();
+class UsersTab extends StatefulWidget {
+  const UsersTab({super.key});
 
   @override
-  State<_UsersTab> createState() => _UsersTabState();
+  State<UsersTab> createState() => _UsersTabState();
 }
 
-class _UsersTabState extends State<_UsersTab> {
+class _UsersTabState extends State<UsersTab> {
   final _userRepo = UserRepository();
   List<AppUser> _users = [];
   bool _loading = true;
@@ -262,14 +198,14 @@ class _PermissionSwitch extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------
-class _NotificationsTab extends StatefulWidget {
-  const _NotificationsTab();
+class NotificationsTab extends StatefulWidget {
+  const NotificationsTab({super.key});
 
   @override
-  State<_NotificationsTab> createState() => _NotificationsTabState();
+  State<NotificationsTab> createState() => _NotificationsTabState();
 }
 
-class _NotificationsTabState extends State<_NotificationsTab> {
+class _NotificationsTabState extends State<NotificationsTab> {
   final _repo = NotificationRepository();
   List<AppNotification> _notifications = [];
   bool _loading = true;
