@@ -11,6 +11,7 @@ import '../../engineer/presentation/engineer_home_screen.dart';
 import '../../item_timeline/presentation/item_timeline_screen.dart';
 import '../../inventory_summary/presentation/inventory_summary_screen.dart';
 import '../../analytics/presentation/analytics_screen.dart';
+import '../../activity_log/presentation/activity_log_screen.dart';
 import '../../export/presentation/export_screen.dart';
 import '../../admin/presentation/admin_home_screen.dart';
 import '../../knowledge_import/presentation/knowledge_import_screen.dart';
@@ -100,6 +101,12 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       icon: Icons.timeline_outlined,
       permission: (u) => u?.canTrack ?? false,
       builder: () => const ItemTimelineScreen(),
+    ),
+    _NavTab(
+      label: 'سجل النشاط',
+      icon: Icons.receipt_long_outlined,
+      permission: (u) => u?.canTrack ?? false,
+      builder: () => const ActivityLogScreen(),
     ),
     _NavTab(
       label: 'المخزون',
