@@ -609,6 +609,14 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
                     '#${item.itemId} • ${item.status} • ${item.condition ?? ''}',
                     textAlign: TextAlign.right,
                   ),
+                  onTap: () async {
+                    await showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      builder: (context) => _ItemEditSheet(item: item),
+                    );
+                    _load();
+                  },
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline, color: AppColors.danger),
                     onPressed: () => _confirmDelete(item),
@@ -619,6 +627,239 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------
+// شاشة تعديل قطعة كاملة: حقول المخزون + حقول قاعدة المعرفة المرتبطة
+// برقم القطعة مع بعض، بدل شاشتين منفصلتين.
+// ---------------------------------------------------------------------
+
+class _ItemEditSheet extends StatefulWidget {
+  const _ItemEditSheet({required this.item});
+  final InventoryItem item;
+
+  @override
+  State<_ItemEditSheet> createState() => _ItemEditSheetState();
+}
+
+class _ItemEditSheetState extends State<_ItemEditSheet> {
+  final _inventoryRepo = InventoryRepository();
+  final _knowledgeRepo = KnowledgeBaseRepository();
+
+  bool _loading = true;
+  bool _saving = false;
+
+  late final TextEditingController _locationField;
+  late final TextEditingController _serialField;
+  ItemCondition _condition = ItemCondition.used;
+  ItemStatus _status = ItemStatus.available;
+  OwnershipStatus _ownership = OwnershipStatus.owned;
+
+  late final TextEditingController _brandField;
+  late final TextEditingController _categoryField;
+  late final TextEditingController _compatibleModelField;
+  late final TextEditingController _additionalCompatField;
+  late final TextEditingController _marketValueField;
+  late final TextEditingController _insightsField;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.item;
+    _locationField = TextEditingController(text: item.location ?? '');
+    _serialField = TextEditingController(text: item.serialNumber ?? '');
+    _condition = ItemCondition.fromDb(item.condition);
+    _status = ItemStatus.fromDb(item.status);
+    _ownership = OwnershipStatus.fromDb(item.ownershipStatus);
+
+    _brandField = TextEditingController();
+    _categoryField = TextEditingController();
+    _compatibleModelField = TextEditingController();
+    _additionalCompatField = TextEditingController();
+    _marketValueField = TextEditingController();
+    _insightsField = TextEditingController();
+    _loadKnowledge();
+  }
+
+  Future<void> _loadKnowledge() async {
+    final kb = await _knowledgeRepo.getByPartNumber(widget.item.partNumber);
+    if (kb != null && mounted) {
+      setState(() {
+        _brandField.text = kb.brand ?? '';
+        _categoryField.text = kb.category ?? '';
+        _compatibleModelField.text = kb.compatibleModel ?? '';
+        _additionalCompatField.text = kb.additionalCompatibility ?? '';
+        _marketValueField.text = kb.marketValue ?? '';
+        _insightsField.text = kb.geminiInsights ?? '';
+      });
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  void dispose() {
+    _locationField.dispose();
+    _serialField.dispose();
+    _brandField.dispose();
+    _categoryField.dispose();
+    _compatibleModelField.dispose();
+    _additionalCompatField.dispose();
+    _marketValueField.dispose();
+    _insightsField.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await _inventoryRepo.updateFields(widget.item.itemId!, {
+        'location': _locationField.text.trim().isEmpty ? null : _locationField.text.trim(),
+        'serial_number': _serialField.text.trim().isEmpty ? null : _serialField.text.trim(),
+        'condition': _condition.dbValue,
+        'status': _status.dbValue,
+        'ownership_status': _ownership.dbValue,
+      });
+
+      final kbFields = <String, dynamic>{};
+      void addIfNotEmpty(String key, String value) {
+        if (value.trim().isNotEmpty) kbFields[key] = value.trim();
+      }
+      addIfNotEmpty('Brand', _brandField.text);
+      addIfNotEmpty('Category', _categoryField.text);
+      addIfNotEmpty('Compatible_Model', _compatibleModelField.text);
+      addIfNotEmpty('Additional_Compatibility', _additionalCompatField.text);
+      addIfNotEmpty('Market_Value', _marketValueField.text);
+      addIfNotEmpty('Gemini_Insights', _insightsField.text);
+      if (kbFields.isNotEmpty) {
+        await _knowledgeRepo.upsertFields(widget.item.partNumber, kbFields);
+      }
+
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل الحفظ: $e'), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        if (_loading) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              '${widget.item.partNumber} — #${widget.item.itemId}',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.primary),
+              textAlign: TextAlign.right,
+            ),
+            const SizedBox(height: 16),
+            Text('بيانات المخزون', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _locationField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الموقع'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _serialField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الرقم التسلسلي (Serial)'),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<ItemStatus>(
+              initialValue: _status,
+              decoration: const InputDecoration(labelText: 'الحالة'),
+              items: ItemStatus.values
+                  .map((s) => DropdownMenuItem(value: s, child: Text(s.arabicLabel)))
+                  .toList(),
+              onChanged: (v) => setState(() => _status = v ?? _status),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<ItemCondition>(
+              initialValue: _condition,
+              decoration: const InputDecoration(labelText: 'الحالة الفنية'),
+              items: ItemCondition.values
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c.dbValue)))
+                  .toList(),
+              onChanged: (v) => setState(() => _condition = v ?? _condition),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<OwnershipStatus>(
+              initialValue: _ownership,
+              decoration: const InputDecoration(labelText: 'حالة الملكية'),
+              items: OwnershipStatus.values
+                  .map((o) => DropdownMenuItem(value: o, child: Text(o.arabicLabel)))
+                  .toList(),
+              onChanged: (v) => setState(() => _ownership = v ?? _ownership),
+            ),
+            const SizedBox(height: 20),
+            Text('قاعدة المعرفة الفنية', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _brandField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'البراند'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _categoryField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الفئة/الوصف'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _compatibleModelField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الجهاز المتوافق'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _additionalCompatField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'أجهزة متوافقة إضافية'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _marketValueField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'السعر التقريبي'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _insightsField,
+              textAlign: TextAlign.right,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'ملاحظات فنية'),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('حفظ كل التعديلات'),
+            ),
+            const SizedBox(height: 12),
+          ],
+        );
+      },
     );
   }
 }
