@@ -28,4 +28,8 @@ class UserRepository {
   Future<void> updateStatus(String username, String status) async {
     await _client.from('users').update({'status': status}).eq('username', username);
   }
+
+  Future<void> updateRole(String username, String role) async {
+    await _client.from('users').update({'role': role}).eq('username', username);
+  }
 }
