@@ -9,6 +9,7 @@ class TransactionLog {
   final ActionType actionType;
   final String? username;
   final String? details;
+  final String? exitType; // Sale/Loan/Damaged - فقط لما actionType == out
   final DateTime? timestamp;
 
   const TransactionLog({
@@ -17,6 +18,7 @@ class TransactionLog {
     required this.actionType,
     this.username,
     this.details,
+    this.exitType,
     this.timestamp,
   });
 
@@ -27,6 +29,7 @@ class TransactionLog {
       actionType: ActionType.fromDb(map['action_type'] as String?),
       username: map['username'] as String?,
       details: map['details'] as String?,
+      exitType: map['exit_type'] as String?,
       timestamp: map['timestamp'] != null
           ? DateTime.tryParse(map['timestamp'].toString())
           : null,
