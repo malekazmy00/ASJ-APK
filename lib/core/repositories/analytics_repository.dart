@@ -1,9 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// بيانات تحليلية مبنية على الجداول الموجودة فعلاً (inventory_items،
-/// transactions_log) — بدون أي عمود لسه مش موجود (زي "سبب الصرف" اللي
-/// محتاج dropdown جديد مش متنفذ لسه). التجميع بيتم في Dart لأن REST
-/// API بتاع Supabase مباشرة مش بيدعم GROUP BY من غير RPC مخصص.
+/// transactions_log). التجميع بيتم في Dart لأن REST API بتاع Supabase
+/// مباشرة مش بيدعم GROUP BY من غير RPC مخصص.
 class AnalyticsRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
@@ -42,6 +41,24 @@ class AnalyticsRepository {
         .eq('action_type', 'OUT')
         .gte('timestamp', since.toIso8601String());
     return (rows as List).length;
+  }
+
+  /// توزيع أسباب الصرف (بيع/إعارة/تلف) لآخر [days] يوم — يعتمد على
+  /// عمود exit_type (راجع migrations/002_add_exit_type.sql).
+  Future<Map<String, int>> getExitReasonBreakdown({int days = 30}) async {
+    final since = DateTime.now().subtract(Duration(days: days));
+    final rows = await _client
+        .from('transactions_log')
+        .select('exit_type')
+        .eq('action_type', 'OUT')
+        .gte('timestamp', since.toIso8601String());
+    final counts = <String, int>{};
+    for (final r in rows as List) {
+      final t = r['exit_type'] as String?;
+      if (t == null) continue; // حركات صرف قديمة قبل إضافة العمود
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return counts;
   }
 
   /// عدد عمليات الصرف يومياً لآخر [days] يوم (بما فيها الأيام اللي
