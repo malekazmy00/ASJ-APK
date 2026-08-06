@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/models/inventory_item.dart';
+import '../../../core/models/knowledge_base_entry.dart';
 import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
@@ -10,8 +13,11 @@ import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
-/// واجهة المهندس: تبويبان — (1) بحث ذكي + صرف/بيع، (2) لوحة تعديل
-/// ديناميكية بفلاتر وحذف نهائي. مطابقة لتدفق views/engineer.py الأصلي.
+/// واجهة المهندس: تبويبان — (1) بحث وصرف (يشمل دفتر الاستعلامات مدمج
+/// داخل نفس تدفق البحث)، (2) لوحة تعديل ديناميكية بفلاتر وحذف نهائي.
+///
+/// ملاحظة مهمة: البحث نفسه هو آلية تسجيل الاستعلام (زي النظام الأصلي
+/// بالظبط) — كل بحث بيتسجل تلقائياً كاستعلام، مفيش نموذج إدخال منفصل.
 class EngineerHomeScreen extends ConsumerStatefulWidget {
   const EngineerHomeScreen({super.key});
 
@@ -21,7 +27,7 @@ class EngineerHomeScreen extends ConsumerStatefulWidget {
 
 class _EngineerHomeScreenState extends ConsumerState<EngineerHomeScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 3, vsync: this);
+  late final TabController _tabController = TabController(length: 2, vsync: this);
 
   @override
   void dispose() {
@@ -41,7 +47,6 @@ class _EngineerHomeScreenState extends ConsumerState<EngineerHomeScreen>
           tabs: const [
             Tab(text: 'بحث وصرف', icon: Icon(Icons.search)),
             Tab(text: 'لوحة التعديل', icon: Icon(Icons.edit_note)),
-            Tab(text: 'دفتر الاستعلامات', icon: Icon(Icons.assignment_outlined)),
           ],
         ),
         actions: [
@@ -56,7 +61,6 @@ class _EngineerHomeScreenState extends ConsumerState<EngineerHomeScreen>
         children: const [
           _SmartSearchTab(),
           _EditDashboardTab(),
-          _QueriesTab(),
         ],
       ),
     );
@@ -64,7 +68,7 @@ class _EngineerHomeScreenState extends ConsumerState<EngineerHomeScreen>
 }
 
 // ---------------------------------------------------------------------
-// تبويب البحث الذكي والصرف
+// تبويب البحث الذكي والصرف (ودفتر الاستعلامات المدمج)
 // ---------------------------------------------------------------------
 
 class _SmartSearchTab extends ConsumerStatefulWidget {
@@ -76,15 +80,38 @@ class _SmartSearchTab extends ConsumerStatefulWidget {
 
 class _SmartSearchTabState extends ConsumerState<_SmartSearchTab> {
   final _searchController = TextEditingController();
+  final _targetDeviceController = TextEditingController();
+  final _merchantNameController = TextEditingController();
+  final _merchantPhoneController = TextEditingController();
+  final _commentsController = TextEditingController();
+  QueryReason _reason = QueryReason.inspection;
+  bool _showDetails = false;
+
   final _inventoryRepo = InventoryRepository();
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
+  final _queryRepo = EngineerQueryRepository();
 
   bool _isSearching = false;
+  bool _hasSearched = false;
   List<InventoryItem> _inventoryResults = [];
-  bool _searchedKnowledgeBase = false;
-  String? _knowledgeBaseNote;
+  List<KnowledgeBaseEntry> _knowledgeResults = [];
+  List<EngineerQuery> _previousQueries = [];
   final Set<int> _dispatchingIds = {}; // منع الضغط المتكرر أثناء تنفيذ الصرف
+
+  bool _geminiLoading = false;
+  Map<String, dynamic>? _geminiResult;
+  String? _geminiError;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _targetDeviceController.dispose();
+    _merchantNameController.dispose();
+    _merchantPhoneController.dispose();
+    _commentsController.dispose();
+    super.dispose();
+  }
 
   Future<void> _search() async {
     final query = _searchController.text.trim();
@@ -92,37 +119,92 @@ class _SmartSearchTabState extends ConsumerState<_SmartSearchTab> {
 
     setState(() {
       _isSearching = true;
+      _hasSearched = true;
       _inventoryResults = [];
-      _searchedKnowledgeBase = false;
-      _knowledgeBaseNote = null;
+      _knowledgeResults = [];
+      _previousQueries = [];
+      _geminiLoading = true;
+      _geminiResult = null;
+      _geminiError = null;
     });
 
-    try {
-      // 1) المخزون أولاً (زي النظام الأصلي بالظبط)
-      final items = await _inventoryRepo.smartSearch(query);
+    // بحث Gemini الحي بيشتغل بالتوازي من غير ما يوقف عرض النتائج الداخلية
+    unawaited(_runGeminiSearch(query));
 
-      if (items.isNotEmpty) {
-        setState(() => _inventoryResults = items);
-      } else {
-        // 2) لو مفيش نتيجة، نجرب قاعدة المعرفة (قبل اللجوء لـ Gemini)
-        final kbResults = await _knowledgeRepo.searchByCategoryOrPart(query);
+    try {
+      final username = ref.read(authControllerProvider)?.username ?? 'unknown';
+
+      // الاتنين مع بعض دايماً: المخزون الفعلي + قاعدة المعرفة الداخلية
+      // (بيانات ميدانية موثوقة) — مفيش تسلسل يوقف عند أول نتيجة.
+      final items = await _inventoryRepo.smartSearch(query);
+      final kbResults = await _knowledgeRepo.searchByCategoryOrPart(query);
+      final previousQueries = await _queryRepo.getByPartNumber(query);
+
+      if (mounted) {
         setState(() {
-          _searchedKnowledgeBase = true;
-          _knowledgeBaseNote = kbResults.isEmpty
-              ? 'القطعة غير موجودة في المخزون ولا في قاعدة المعرفة.'
-              : 'غير متوفرة في المخزون حالياً، لكن معروفة في قاعدة المعرفة:\n'
-                  '${kbResults.map((e) => '${e.partNumber} — ${e.category ?? ''}').join('\n')}';
+          _inventoryResults = items;
+          _knowledgeResults = kbResults;
+          _previousQueries = previousQueries;
         });
       }
 
-      final username = ref.read(authControllerProvider)?.username ?? 'unknown';
+      // كل بحث هو نفسه استعلام مسجَّل (زي النظام الأصلي بالظبط) — بيتسجل
+      // تلقائياً بالتفاصيل الإضافية لو اتملت، أو بس رقم القطعة وسبب افتراضي.
+      await _queryRepo.create(EngineerQuery(
+        username: username,
+        partNumber: query,
+        partCategory: kbResults.isNotEmpty ? kbResults.first.category : null,
+        queryReason: _reason.dbValue,
+        targetDevice: _targetDeviceController.text.trim().isEmpty
+            ? null
+            : _targetDeviceController.text.trim(),
+        merchantName: _merchantNameController.text.trim().isEmpty
+            ? null
+            : _merchantNameController.text.trim(),
+        merchantPhone: _merchantPhoneController.text.trim().isEmpty
+            ? null
+            : _merchantPhoneController.text.trim(),
+        comments: _commentsController.text.trim().isEmpty
+            ? null
+            : _commentsController.text.trim(),
+      ));
+
       await _logRepo.logAction(
         actionType: ActionType.search,
         username: username,
         details: 'بحث عن: $query',
       );
+
+      // تفضيل تصفير الحقول الإضافية بعد كل بحث ناجح عشان البحث الجاي
+      // يبدأ نضيف، من غير ما يورّث بيانات تاجر/جهاز بحث سابق بالغلط.
+      _targetDeviceController.clear();
+      _merchantNameController.clear();
+      _merchantPhoneController.clear();
+      _commentsController.clear();
     } finally {
       if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _runGeminiSearch(String query) async {
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'search-part',
+        body: {'query': query},
+      );
+      final data = response.data;
+      if (data is! Map || data['success'] != true) {
+        final errMsg = (data is Map ? data['error'] : null) ?? 'رد غير متوقع من الخادم';
+        if (mounted) setState(() => _geminiError = errMsg.toString());
+        return;
+      }
+      if (mounted) {
+        setState(() => _geminiResult = Map<String, dynamic>.from(data['result'] as Map));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _geminiError = 'تعذر الوصول لبحث Gemini الحي');
+    } finally {
+      if (mounted) setState(() => _geminiLoading = false);
     }
   }
 
@@ -173,57 +255,98 @@ class _SmartSearchTabState extends ConsumerState<_SmartSearchTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(
-                    hintText: 'ابحث برقم القطعة أو النوع...',
-                    prefixIcon: Icon(Icons.search),
-                  ),
-                  onSubmitted: (_) => _search(),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  hintText: 'ابحث برقم القطعة أو النوع...',
+                  prefixIcon: Icon(Icons.search),
                 ),
+                onSubmitted: (_) => _search(),
               ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _isSearching ? null : _search,
-                child: _isSearching
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Text('بحث'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: _isSearching ? null : _search,
+              child: _isSearching
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('بحث'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // تفاصيل الاستعلام (اختيارية) — بتتسجل مع البحث نفسه بدل نموذج منفصل
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            title: const Text('تفاصيل إضافية عن الاستعلام (اختياري)', textAlign: TextAlign.right),
+            initiallyExpanded: _showDetails,
+            onExpansionChanged: (v) => setState(() => _showDetails = v),
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: 12),
+            children: [
+              DropdownButtonFormField<QueryReason>(
+                initialValue: _reason,
+                decoration: const InputDecoration(labelText: 'سبب الاستعلام'),
+                items: QueryReason.values
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r.dbValue)))
+                    .toList(),
+                onChanged: (v) => setState(() => _reason = v ?? _reason),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _targetDeviceController,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'الجهاز المطلوبة له'),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _merchantNameController,
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(labelText: 'اسم التاجر'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _merchantPhoneController,
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(labelText: 'رقم التاجر'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _commentsController,
+                textAlign: TextAlign.right,
+                maxLines: 2,
+                decoration: const InputDecoration(labelText: 'ملاحظات'),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (_searchedKnowledgeBase && _knowledgeBaseNote != null)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.warning),
-              ),
-              child: Text(_knowledgeBaseNote!, textAlign: TextAlign.right),
-            ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _inventoryResults.length,
-              itemBuilder: (context, index) {
-                final item = _inventoryResults[index];
-                return Card(
+        ),
+        if (_hasSearched) ...[
+          const SizedBox(height: 8),
+          _SectionHeader('المتاح في المخزون الآن', Icons.inventory_2_outlined),
+          if (_inventoryResults.isEmpty)
+            const _EmptyNote('غير متوفرة في المخزون حالياً.')
+          else
+            ..._inventoryResults.map((item) => Card(
                   child: ListTile(
-                    title: Text('${item.partNumber} — ${item.itemType}',
-                        textAlign: TextAlign.right),
+                    title: Text('${item.partNumber} — ${item.itemType}', textAlign: TextAlign.right),
                     subtitle: Text(
                       'رقم القطعة الداخلي: #${item.itemId}  •  الحالة: ${item.status}'
                       '${item.location != null ? '  •  الموقع: ${item.location}' : ''}',
@@ -245,12 +368,122 @@ class _SmartSearchTabState extends ConsumerState<_SmartSearchTab> {
                           )
                         : Chip(label: Text(item.status)),
                   ),
-                );
-              },
+                )),
+          const SizedBox(height: 16),
+          _SectionHeader('من قاعدة المعرفة الداخلية', Icons.storage_outlined),
+          if (_knowledgeResults.isEmpty)
+            const _EmptyNote('لا توجد بيانات محفوظة عن هذه القطعة في قاعدة المعرفة.')
+          else
+            ..._knowledgeResults.map((e) => Card(
+                  child: ListTile(
+                    title: Text(e.partNumber, textAlign: TextAlign.right),
+                    subtitle: Text(
+                      [
+                        if (e.brand != null && e.brand!.isNotEmpty) 'البراند: ${e.brand}',
+                        if (e.category != null && e.category!.isNotEmpty) 'النوع: ${e.category}',
+                        if (e.compatibleModel != null && e.compatibleModel!.isNotEmpty)
+                          'يناسب: ${e.compatibleModel}',
+                        if (e.marketValue != null && e.marketValue!.isNotEmpty)
+                          'السعر التقريبي: ${e.marketValue}',
+                      ].join('  •  '),
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
+                )),
+          const SizedBox(height: 16),
+          _SectionHeader('بحث Gemini المباشر', Icons.auto_awesome_outlined),
+          if (_geminiLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (_geminiError != null)
+            _EmptyNote(_geminiError!)
+          else if (_geminiResult != null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if ((_geminiResult!['Summary'] as String? ?? '').isNotEmpty)
+                      Text(_geminiResult!['Summary'], textAlign: TextAlign.right),
+                    const SizedBox(height: 6),
+                    Text(
+                      [
+                        if ((_geminiResult!['Brand'] as String? ?? '').isNotEmpty)
+                          'البراند: ${_geminiResult!['Brand']}',
+                        if ((_geminiResult!['Category'] as String? ?? '').isNotEmpty)
+                          'النوع: ${_geminiResult!['Category']}',
+                        if ((_geminiResult!['Compatible_Model'] as String? ?? '').isNotEmpty)
+                          'يناسب: ${_geminiResult!['Compatible_Model']}',
+                        if ((_geminiResult!['Market_Value'] as String? ?? '').isNotEmpty)
+                          'السعر التقريبي: ${_geminiResult!['Market_Value']}',
+                      ].join('  •  '),
+                      textAlign: TextAlign.right,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
+          const SizedBox(height: 16),
+          _SectionHeader('استعلامات سابقة على نفس القطعة', Icons.history),
+          if (_previousQueries.isEmpty)
+            const _EmptyNote('لا توجد استعلامات سابقة مسجلة على هذه القطعة.')
+          else
+            ..._previousQueries.map((q) => Card(
+                  child: ListTile(
+                    title: Text('${q.username} — ${q.queryReason}', textAlign: TextAlign.right),
+                    subtitle: Text(
+                      q.targetDevice != null ? 'للجهاز: ${q.targetDevice}' : '',
+                      textAlign: TextAlign.right,
+                    ),
+                    trailing: Chip(label: Text(QueryStatus.fromDb(q.status).arabicLabel)),
+                  ),
+                )),
+        ],
+      ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  const _SectionHeader(this.title, this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(width: 8),
+          Icon(icon, size: 20),
         ],
       ),
+    );
+  }
+}
+
+class _EmptyNote extends StatelessWidget {
+  final String text;
+  const _EmptyNote(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.warning),
+      ),
+      child: Text(text, textAlign: TextAlign.right),
     );
   }
 }
@@ -414,183 +647,6 @@ class _EditDashboardTabState extends ConsumerState<_EditDashboardTab> {
             },
           ),
         ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------
-// تبويب دفتر الاستعلامات (طلب قطعة غير متوفرة)
-// ---------------------------------------------------------------------
-
-class _QueriesTab extends ConsumerStatefulWidget {
-  const _QueriesTab();
-
-  @override
-  ConsumerState<_QueriesTab> createState() => _QueriesTabState();
-}
-
-class _QueriesTabState extends ConsumerState<_QueriesTab> {
-  final _repo = EngineerQueryRepository();
-  final _partNumberController = TextEditingController();
-  final _targetDeviceController = TextEditingController();
-  final _merchantNameController = TextEditingController();
-  final _merchantPhoneController = TextEditingController();
-  final _commentsController = TextEditingController();
-  QueryReason _reason = QueryReason.inspection;
-
-  List<EngineerQuery> _queries = [];
-  bool _loading = false;
-  bool _submitting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final list = await _repo.getRecent();
-    if (mounted) {
-      setState(() {
-        _queries = list;
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _submit() async {
-    final partNumber = _partNumberController.text.trim();
-    if (partNumber.isEmpty) return;
-    final username = ref.read(authControllerProvider)?.username ?? 'unknown';
-
-    setState(() => _submitting = true);
-    try {
-      await _repo.create(EngineerQuery(
-        username: username,
-        partNumber: partNumber,
-        queryReason: _reason.dbValue,
-        targetDevice: _targetDeviceController.text.trim().isEmpty
-            ? null
-            : _targetDeviceController.text.trim(),
-        merchantName: _merchantNameController.text.trim().isEmpty
-            ? null
-            : _merchantNameController.text.trim(),
-        merchantPhone: _merchantPhoneController.text.trim().isEmpty
-            ? null
-            : _merchantPhoneController.text.trim(),
-        comments: _commentsController.text.trim().isEmpty
-            ? null
-            : _commentsController.text.trim(),
-      ));
-      _partNumberController.clear();
-      _targetDeviceController.clear();
-      _merchantNameController.clear();
-      _merchantPhoneController.clear();
-      _commentsController.clear();
-      await _load();
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _partNumberController.dispose();
-    _targetDeviceController.dispose();
-    _merchantNameController.dispose();
-    _merchantPhoneController.dispose();
-    _commentsController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('طلب استعلام جديد',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _partNumberController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'رقم القطعة المطلوبة'),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<QueryReason>(
-                  initialValue: _reason,
-                  decoration: const InputDecoration(labelText: 'سبب الاستعلام'),
-                  items: QueryReason.values
-                      .map((r) => DropdownMenuItem(value: r, child: Text(r.dbValue)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _reason = v ?? _reason),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _targetDeviceController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'الجهاز المطلوبة له (اختياري)'),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _merchantNameController,
-                        textAlign: TextAlign.right,
-                        decoration: const InputDecoration(labelText: 'اسم التاجر (اختياري)'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _merchantPhoneController,
-                        textAlign: TextAlign.right,
-                        decoration: const InputDecoration(labelText: 'رقم التاجر (اختياري)'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _commentsController,
-                  textAlign: TextAlign.right,
-                  maxLines: 2,
-                  decoration: const InputDecoration(labelText: 'ملاحظات (اختياري)'),
-                ),
-                const SizedBox(height: 14),
-                ElevatedButton.icon(
-                  onPressed: _submitting ? null : _submit,
-                  icon: const Icon(Icons.send_outlined),
-                  label: Text(_submitting ? 'جارٍ الإرسال...' : 'تسجيل الاستعلام'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Text('آخر الاستعلامات', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        if (_loading) const LinearProgressIndicator(),
-        ..._queries.map((q) => Card(
-              child: ListTile(
-                title: Text('${q.partNumber} — ${q.queryReason}',
-                    textAlign: TextAlign.right),
-                subtitle: Text(
-                  '${q.username}${q.targetDevice != null ? ' • ${q.targetDevice}' : ''}',
-                  textAlign: TextAlign.right,
-                ),
-                trailing: Chip(label: Text(q.status)),
-              ),
-            )),
       ],
     );
   }
