@@ -24,6 +24,7 @@ class AppUser {
   final bool canExport;
   final bool canTrack;
   final bool canEdit;
+  final String status;
 
   const AppUser({
     required this.username,
@@ -31,6 +32,7 @@ class AppUser {
     this.canExport = false,
     this.canTrack = false,
     this.canEdit = false,
+    this.status = 'Active',
   });
 
   factory AppUser.fromMap(Map<String, dynamic> map) {
@@ -40,6 +42,7 @@ class AppUser {
       canExport: map['can_export'] as bool? ?? false,
       canTrack: map['can_track'] as bool? ?? false,
       canEdit: map['can_edit'] as bool? ?? false,
+      status: map['status'] as String? ?? 'Active',
     );
   }
 }
