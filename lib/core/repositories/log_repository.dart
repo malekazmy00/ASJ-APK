@@ -12,12 +12,14 @@ class LogRepository {
     required ActionType actionType,
     required String username,
     String details = '',
+    String? exitType,
   }) async {
     await _client.from('transactions_log').insert({
       'item_id': itemId,
       'action_type': actionType.dbValue,
       'username': username,
       'details': details,
+      if (exitType != null) 'exit_type': exitType,
     });
   }
 
