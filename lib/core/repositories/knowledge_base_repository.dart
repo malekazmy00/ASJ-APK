@@ -64,4 +64,19 @@ class KnowledgeBaseRepository {
         .update(fields)
         .eq('Part_Number', partNumber);
   }
+
+  /// استيراد جماعي من CSV (شاشة الأدمن) — upsert على دفعات من 500 صف،
+  /// بيستبدل بيانات رقم القطعة بالكامل لو موجود (عكس createOrAppendInsight
+  /// اللي بتحمي البيانات الموثوقة من الكتابة فوقها تلقائياً من AI؛ هنا
+  /// الأدمن نفسه اللي بيستورد البيانات بقرار واعي، فمفيش داعي للحماية).
+  Future<int> bulkUpsert(List<Map<String, dynamic>> rows) async {
+    const batchSize = 500;
+    var imported = 0;
+    for (var i = 0; i < rows.length; i += batchSize) {
+      final batch = rows.sublist(i, i + batchSize > rows.length ? rows.length : i + batchSize);
+      await _client.from('specs_knowledge_base').upsert(batch, onConflict: 'Part_Number');
+      imported += batch.length;
+    }
+    return imported;
+  }
 }
