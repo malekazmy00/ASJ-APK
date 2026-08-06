@@ -11,6 +11,7 @@ import '../../engineer/presentation/engineer_home_screen.dart';
 import '../../item_timeline/presentation/item_timeline_screen.dart';
 import '../../inventory_summary/presentation/inventory_summary_screen.dart';
 import '../../analytics/presentation/analytics_screen.dart';
+import '../../export/presentation/export_screen.dart';
 import '../../admin/presentation/admin_home_screen.dart';
 import '../../settings/presentation/admin_settings_screen.dart';
 import '../../user_activity/presentation/user_activity_screen.dart';
@@ -110,6 +111,12 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       icon: Icons.bar_chart_outlined,
       permission: (u) => u?.canExport ?? false,
       builder: () => const AnalyticsScreen(),
+    ),
+    _NavTab(
+      label: 'التصدير',
+      icon: Icons.ios_share,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const ExportScreen(),
     ),
     // -- تبويبات الأدمن --
     _NavTab(
