@@ -4,11 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/analytics_repository.dart';
 
-/// شاشة تحليل بيانات المخزون. مبنية بالكامل على بيانات حقيقية موجودة
-/// في القاعدة دلوقتي (حالة القطع، حالة الملكية، حركات الصرف) — لسه
-/// ناقص "توزيع الصرف حسب السبب" لحد ما نضيف dropdown سبب الصرف
-/// (بيع/إعارة/تلف) في شاشة الصرف نفسها، عشان مفيش عمود بيانات
-/// موثوق نبني عليه الرسم ده دلوقتي.
+/// شاشة تحليل بيانات المخزون. مبنية بالكامل على بيانات حقيقية.
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
 
@@ -25,6 +21,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _dispatchedMonth = 0;
   Map<String, int> _statusBreakdown = {};
   Map<String, int> _ownershipBreakdown = {};
+  Map<String, int> _exitReasonBreakdown = {};
   List<MapEntry<DateTime, int>> _trend = [];
 
   @override
@@ -42,6 +39,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _repo.getDispatchCountSince(now.subtract(const Duration(days: 30))),
       _repo.getStatusBreakdown(),
       _repo.getOwnershipBreakdown(),
+      _repo.getExitReasonBreakdown(),
       _repo.getDispatchTrend(days: 30),
     ]);
     if (!mounted) return;
@@ -51,7 +49,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _dispatchedMonth = results[2] as int;
       _statusBreakdown = results[3] as Map<String, int>;
       _ownershipBreakdown = results[4] as Map<String, int>;
-      _trend = results[5] as List<MapEntry<DateTime, int>>;
+      _exitReasonBreakdown = results[5] as Map<String, int>;
+      _trend = results[6] as List<MapEntry<DateTime, int>>;
       _loading = false;
     });
   }
@@ -65,6 +64,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         .toList();
     final ownershipData = _ownershipBreakdown.entries
         .map((e) => _Slice(OwnershipStatus.fromDb(e.key).arabicLabel, e.value))
+        .toList();
+    final exitReasonData = _exitReasonBreakdown.entries
+        .map((e) => _Slice(ExitType.fromDb(e.key).arabicLabel, e.value))
         .toList();
     final inCustodyCount = _ownershipBreakdown.entries
         .where((e) => e.key != 'Owned')
@@ -116,6 +118,30 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 16),
+
+          _ChartCard(
+            title: 'توزيع الصرف حسب السبب — آخر 30 يوم',
+            child: exitReasonData.isEmpty
+                ? const Center(
+                    child: Text(
+                      'لا توجد حركات صرف مسجّلة بسبب محدد بعد',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : SfCircularChart(
+                    legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
+                    series: <CircularSeries>[
+                      PieSeries<_Slice, String>(
+                        dataSource: exitReasonData,
+                        xValueMapper: (d, _) => d.label,
+                        yValueMapper: (d, _) => d.value,
+                        dataLabelSettings: const DataLabelSettings(isVisible: true),
+                      ),
+                    ],
+                  ),
           ),
           const SizedBox(height: 16),
 
