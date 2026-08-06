@@ -12,29 +12,7 @@ import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
-/// نقطة الدخول المستقلة لشاشة الإدخال (Scaffold + AppBar + WorkerBody).
-class WorkerHomeScreen extends ConsumerWidget {
-  const WorkerHomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('تسجيل قطعة جديدة'),
-        backgroundColor: AppColors.primary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
-          ),
-        ],
-      ),
-      body: const WorkerBody(),
-    );
-  }
-}
-
-/// محتوى شاشة الإدخال - قابل لإعادة الاستخدام جوه لوحة الأدمن.
+/// محتوى شاشة الإدخال - تبويب داخل الشاشة الموحّدة (role_home_screen.dart).
 class WorkerBody extends ConsumerStatefulWidget {
   const WorkerBody({super.key});
 
