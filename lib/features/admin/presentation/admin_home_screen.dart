@@ -116,6 +116,88 @@ class _UsersTabState extends State<UsersTab> {
     }
   }
 
+  Future<void> _showEditUserDialog(AppUser user) async {
+    String role = user.role.name;
+    String status = user.status;
+    final newPasswordCtrl = TextEditingController();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(user.username),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: role,
+                decoration: const InputDecoration(labelText: 'الدور'),
+                items: const [
+                  DropdownMenuItem(value: 'worker', child: Text('عامل')),
+                  DropdownMenuItem(value: 'engineer', child: Text('مهندس')),
+                  DropdownMenuItem(value: 'admin', child: Text('أدمن')),
+                ],
+                onChanged: (v) => setDialogState(() => role = v ?? role),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration: const InputDecoration(labelText: 'الحالة'),
+                items: const [
+                  DropdownMenuItem(value: 'Active', child: Text('مفعّل')),
+                  DropdownMenuItem(value: 'Inactive', child: Text('موقوف')),
+                ],
+                onChanged: (v) => setDialogState(() => status = v ?? status),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: newPasswordCtrl,
+                obscureText: true,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  labelText: 'كلمة مرور جديدة (سيبها فاضية لو مش هتغيّرها)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (saved != true) return;
+
+    if (role != user.role.name) {
+      await _userRepo.updateRole(user.username, role);
+    }
+    if (status != user.status) {
+      await _userRepo.updateStatus(user.username, status);
+    }
+    if (newPasswordCtrl.text.trim().isNotEmpty) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'admin-reset-password',
+        body: {'username': user.username, 'newPassword': newPasswordCtrl.text.trim()},
+      );
+      final data = response.data as Map<String, dynamic>?;
+      if (data?['success'] != true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل تغيير كلمة المرور: ${data?['error'] ?? ''}')),
+        );
+      }
+    }
+    _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -133,38 +215,49 @@ class _UsersTabState extends State<UsersTab> {
               itemBuilder: (context, index) {
                 final user = _users[index];
                 return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Chip(label: Text(user.role.name)),
-                            const Spacer(),
-                            Text(user.username,
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                  child: InkWell(
+                    onTap: () => _showEditUserDialog(user),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Chip(label: Text(user.role.name)),
+                              if (user.status != 'Active') ...[
+                                const SizedBox(width: 6),
+                                const Chip(
+                                  label: Text('موقوف', style: TextStyle(fontSize: 10.5)),
+                                  backgroundColor: Color(0xFFFDECEC),
+                                ),
+                              ],
+                              const Spacer(),
+                              Text(user.username,
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                              const Icon(Icons.edit_outlined, size: 16, color: AppColors.textMuted),
+                            ],
+                          ),
+                          if (user.role != UserRole.admin) ...[
+                            const Divider(),
+                            _PermissionSwitch(
+                              label: 'تصدير',
+                              value: user.canExport,
+                              onChanged: (v) => _togglePermission(user, 'export', v),
+                            ),
+                            _PermissionSwitch(
+                              label: 'تتبع',
+                              value: user.canTrack,
+                              onChanged: (v) => _togglePermission(user, 'track', v),
+                            ),
+                            _PermissionSwitch(
+                              label: 'تعديل',
+                              value: user.canEdit,
+                              onChanged: (v) => _togglePermission(user, 'edit', v),
+                            ),
                           ],
-                        ),
-                        if (user.role != UserRole.admin) ...[
-                          const Divider(),
-                          _PermissionSwitch(
-                            label: 'تصدير',
-                            value: user.canExport,
-                            onChanged: (v) => _togglePermission(user, 'export', v),
-                          ),
-                          _PermissionSwitch(
-                            label: 'تتبع',
-                            value: user.canTrack,
-                            onChanged: (v) => _togglePermission(user, 'track', v),
-                          ),
-                          _PermissionSwitch(
-                            label: 'تعديل',
-                            value: user.canEdit,
-                            onChanged: (v) => _togglePermission(user, 'edit', v),
-                          ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 );
