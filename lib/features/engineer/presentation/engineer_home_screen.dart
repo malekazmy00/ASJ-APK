@@ -13,72 +13,20 @@ import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
-/// واجهة المهندس: تبويبان — (1) بحث وصرف (يشمل دفتر الاستعلامات مدمج
-/// داخل نفس تدفق البحث)، (2) لوحة تعديل ديناميكية بفلاتر وحذف نهائي.
-///
-/// ملاحظة مهمة: البحث نفسه هو آلية تسجيل الاستعلام (زي النظام الأصلي
-/// بالظبط) — كل بحث بيتسجل تلقائياً كاستعلام، مفيش نموذج إدخال منفصل.
-class EngineerHomeScreen extends ConsumerStatefulWidget {
-  const EngineerHomeScreen({super.key});
-
-  @override
-  ConsumerState<EngineerHomeScreen> createState() => _EngineerHomeScreenState();
-}
-
-class _EngineerHomeScreenState extends ConsumerState<EngineerHomeScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 2, vsync: this);
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('واجهة المهندس'),
-        backgroundColor: AppColors.roleEngineer,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          tabs: const [
-            Tab(text: 'بحث وصرف', icon: Icon(Icons.search)),
-            Tab(text: 'لوحة التعديل', icon: Icon(Icons.edit_note)),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
-          ),
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: const [
-          _SmartSearchTab(),
-          _EditDashboardTab(),
-        ],
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------------
 // تبويب البحث الذكي والصرف (ودفتر الاستعلامات المدمج)
+// يُستخدم الآن كمحتوى تبويب داخل الشاشة الموحّدة (role_home_screen.dart)
+// بدل شاشة منفصلة بـ Scaffold خاص بيه.
 // ---------------------------------------------------------------------
 
-class _SmartSearchTab extends ConsumerStatefulWidget {
-  const _SmartSearchTab();
+class SmartSearchTab extends ConsumerStatefulWidget {
+  const SmartSearchTab({super.key});
 
   @override
-  ConsumerState<_SmartSearchTab> createState() => _SmartSearchTabState();
+  ConsumerState<SmartSearchTab> createState() => _SmartSearchTabState();
 }
 
-class _SmartSearchTabState extends ConsumerState<_SmartSearchTab> {
+class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
   final _searchController = TextEditingController();
   final _targetDeviceController = TextEditingController();
   final _merchantNameController = TextEditingController();
@@ -524,14 +472,14 @@ class _RecipientDialogState extends State<_RecipientDialog> {
 // تبويب لوحة التعديل الديناميكية
 // ---------------------------------------------------------------------
 
-class _EditDashboardTab extends ConsumerStatefulWidget {
-  const _EditDashboardTab();
+class EditDashboardTab extends ConsumerStatefulWidget {
+  const EditDashboardTab({super.key});
 
   @override
-  ConsumerState<_EditDashboardTab> createState() => _EditDashboardTabState();
+  ConsumerState<EditDashboardTab> createState() => _EditDashboardTabState();
 }
 
-class _EditDashboardTabState extends ConsumerState<_EditDashboardTab> {
+class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
   final _inventoryRepo = InventoryRepository();
   final _logRepo = LogRepository();
   final _filterController = TextEditingController();
