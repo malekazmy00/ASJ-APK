@@ -1,6 +1,5 @@
-/// يطابق حرفياً core/models.py -> InventoryItem (جدول inventory_items).
-/// ملاحظة: لا يوجد عمود quantity — كل صف = قطعة فعلية واحدة، والكمية
-/// الظاهرة في الداشبورد التجميعي (المرحلة 3) = COUNT(*) مجمّعة على part_number.
+/// يطابق core/models.py -> InventoryItem (جدول inventory_items)
+/// + عمود ownership_status الجديد (راجع migrations/002).
 class InventoryItem {
   final int? itemId;
   final String itemType;
@@ -10,7 +9,8 @@ class InventoryItem {
   final String? imagePath; // مؤجل استخدامه حالياً (راجع قرار تأجيل الصور)
   final String? ocrText;
   final String status;
-  final String? serialNumber; // عمود جديد، يُضاف عبر SQL migration المرفقة
+  final String? serialNumber;
+  final String ownershipStatus; // Owned / Maintenance / Custody / Trial
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -24,6 +24,7 @@ class InventoryItem {
     this.ocrText,
     this.status = 'Available',
     this.serialNumber,
+    this.ownershipStatus = 'Owned',
     this.createdAt,
     this.updatedAt,
   });
@@ -39,6 +40,7 @@ class InventoryItem {
       ocrText: map['ocr_text'] as String?,
       status: map['status'] as String? ?? 'Available',
       serialNumber: map['serial_number'] as String?,
+      ownershipStatus: map['ownership_status'] as String? ?? 'Owned',
       createdAt: map['created_at'] != null
           ? DateTime.tryParse(map['created_at'].toString())
           : null,
@@ -56,6 +58,7 @@ class InventoryItem {
       if (condition != null) 'condition': condition,
       if (serialNumber != null) 'serial_number': serialNumber,
       'status': status,
+      'ownership_status': ownershipStatus,
     };
   }
 }
