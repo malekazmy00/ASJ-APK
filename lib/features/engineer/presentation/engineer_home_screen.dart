@@ -11,6 +11,7 @@ import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
+import '../../../core/widgets/barcode_scanner_page.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 // ---------------------------------------------------------------------
@@ -219,6 +220,18 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
                 ),
                 onSubmitted: (_) => _search(),
               ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.outlined(
+              icon: const Icon(Icons.qr_code_scanner),
+              tooltip: 'مسح باركود',
+              onPressed: () async {
+                final code = await scanBarcode(context);
+                if (code != null && code.isNotEmpty) {
+                  _searchController.text = code;
+                  _search();
+                }
+              },
             ),
             const SizedBox(width: 8),
             ElevatedButton(
@@ -610,10 +623,11 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
                     textAlign: TextAlign.right,
                   ),
                   onTap: () async {
+                    final username = ref.read(authControllerProvider)?.username ?? 'unknown';
                     await showModalBottomSheet(
                       context: context,
                       isScrollControlled: true,
-                      builder: (context) => _ItemEditSheet(item: item),
+                      builder: (context) => _ItemEditSheet(item: item, username: username),
                     );
                     _load();
                   },
@@ -637,8 +651,9 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
 // ---------------------------------------------------------------------
 
 class _ItemEditSheet extends StatefulWidget {
-  const _ItemEditSheet({required this.item});
+  const _ItemEditSheet({required this.item, required this.username});
   final InventoryItem item;
+  final String username;
 
   @override
   State<_ItemEditSheet> createState() => _ItemEditSheetState();
@@ -647,6 +662,7 @@ class _ItemEditSheet extends StatefulWidget {
 class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _inventoryRepo = InventoryRepository();
   final _knowledgeRepo = KnowledgeBaseRepository();
+  final _logRepo = LogRepository();
 
   bool _loading = true;
   bool _saving = false;
@@ -748,6 +764,56 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     }
   }
 
+  Future<void> _returnToInventory() async {
+    final receivedByController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('استرجاع القطعة'),
+        content: TextField(
+          controller: receivedByController,
+          textAlign: TextAlign.right,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'استلمها (اسمك أو اسم المستلم)'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('تأكيد الاسترجاع'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final receivedBy = receivedByController.text.trim().isEmpty
+        ? widget.username
+        : receivedByController.text.trim();
+
+    setState(() => _saving = true);
+    try {
+      await _inventoryRepo.updateStatus(widget.item.itemId!, 'Available');
+      await _logRepo.logAction(
+        itemId: widget.item.itemId,
+        actionType: ActionType.return_,
+        username: widget.username,
+        details: 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy',
+      );
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل الاسترجاع: $e'), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
@@ -767,6 +833,15 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.primary),
               textAlign: TextAlign.right,
             ),
+            if (ItemStatus.fromDb(widget.item.status) == ItemStatus.out) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _saving ? null : _returnToInventory,
+                icon: const Icon(Icons.assignment_return_outlined),
+                label: const Text('استرجاع القطعة للمخزون'),
+                style: OutlinedButton.styleFrom(foregroundColor: AppColors.success),
+              ),
+            ],
             const SizedBox(height: 16),
             Text('بيانات المخزون', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
             const SizedBox(height: 8),
