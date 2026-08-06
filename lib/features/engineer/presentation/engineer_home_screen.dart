@@ -158,11 +158,11 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
 
   Future<void> _dispatch(InventoryItem item) async {
     if (_dispatchingIds.contains(item.itemId)) return; // منع تكرار الصرف لنفس القطعة
-    final recipient = await showDialog<String>(
+    final result = await showDialog<_DispatchResult>(
       context: context,
       builder: (context) => _RecipientDialog(),
     );
-    if (recipient == null || recipient.trim().isEmpty) return;
+    if (result == null || result.recipient.trim().isEmpty) return;
 
     setState(() => _dispatchingIds.add(item.itemId!));
     try {
@@ -172,7 +172,8 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
         itemId: item.itemId,
         actionType: ActionType.out,
         username: username,
-        details: 'تم الصرف إلى: $recipient',
+        details: 'تم الصرف إلى: ${result.recipient} (${result.exitType.arabicLabel})',
+        exitType: result.exitType.dbValue,
       );
 
       setState(() {
@@ -182,7 +183,7 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('تم صرف القطعة #${item.itemId} إلى $recipient'),
+            content: Text('تم صرف القطعة #${item.itemId} إلى ${result.recipient}'),
             backgroundColor: AppColors.success,
           ),
         );
@@ -436,6 +437,12 @@ class _EmptyNote extends StatelessWidget {
   }
 }
 
+class _DispatchResult {
+  final String recipient;
+  final ExitType exitType;
+  const _DispatchResult(this.recipient, this.exitType);
+}
+
 class _RecipientDialog extends StatefulWidget {
   @override
   State<_RecipientDialog> createState() => _RecipientDialogState();
@@ -443,16 +450,31 @@ class _RecipientDialog extends StatefulWidget {
 
 class _RecipientDialogState extends State<_RecipientDialog> {
   final _controller = TextEditingController();
+  ExitType _exitType = ExitType.sale;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('صرف القطعة'),
-      content: TextField(
-        controller: _controller,
-        textAlign: TextAlign.right,
-        decoration: const InputDecoration(labelText: 'اسم المستلم/الجهة'),
-        autofocus: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _controller,
+            textAlign: TextAlign.right,
+            decoration: const InputDecoration(labelText: 'اسم المستلم/الجهة'),
+            autofocus: true,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<ExitType>(
+            initialValue: _exitType,
+            decoration: const InputDecoration(labelText: 'سبب الصرف'),
+            items: ExitType.values
+                .map((e) => DropdownMenuItem(value: e, child: Text(e.arabicLabel)))
+                .toList(),
+            onChanged: (v) => setState(() => _exitType = v ?? _exitType),
+          ),
+        ],
       ),
       actions: [
         TextButton(
@@ -460,7 +482,8 @@ class _RecipientDialogState extends State<_RecipientDialog> {
           child: const Text('إلغاء'),
         ),
         ElevatedButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text),
+          onPressed: () => Navigator.of(context)
+              .pop(_DispatchResult(_controller.text, _exitType)),
           child: const Text('تأكيد الصرف'),
         ),
       ],
