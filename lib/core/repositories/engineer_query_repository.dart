@@ -23,4 +23,16 @@ class EngineerQueryRepository {
         .update({'status': status})
         .eq('query_id', queryId);
   }
+
+  /// استعلامات سابقة على نفس رقم القطعة (أو نص قريب منه) — تُستخدم
+  /// عشان تظهر جنب نتيجة البحث نفسها بدل تبويب منفصل.
+  Future<List<EngineerQuery>> getByPartNumber(String partNumber, {int limit = 10}) async {
+    final rows = await _client
+        .from('engineer_queries')
+        .select()
+        .ilike('part_number', '%$partNumber%')
+        .order('timestamp', ascending: false)
+        .limit(limit);
+    return (rows as List).map((r) => EngineerQuery.fromMap(r)).toList();
+  }
 }
