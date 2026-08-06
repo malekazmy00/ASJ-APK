@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/app_user.dart';
+import '../../../core/widgets/asj_logo.dart';
 import '../../../core/widgets/locked_feature_placeholder.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../worker/presentation/worker_home_screen.dart';
@@ -165,11 +166,26 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
           ),
         ],
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: _tabs
-            .map((t) => t.isUnlocked(user) ? t.builder() : const LockedFeaturePlaceholder())
-            .toList(),
+      body: Column(
+        children: [
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: _tabs
+                  .map((t) => t.isUnlocked(user) ? t.builder() : const LockedFeaturePlaceholder())
+                  .toList(),
+            ),
+          ),
+          // علامة اللوجو المائية الثابتة أسفل كل شاشة، على الخلفية الفاتحة
+          Container(
+            width: double.infinity,
+            color: AppColors.background,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: Opacity(opacity: 0.14, child: AsjLogo(size: 30)),
+            ),
+          ),
+        ],
       ),
     );
   }
