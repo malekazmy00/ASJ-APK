@@ -4,9 +4,10 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/asj_logo.dart';
 import 'auth_providers.dart';
 
-/// شاشة دخول بأسلوب مبسّط شبيه بتطبيقات التواصل الاجتماعي الكبيرة
-/// (لوجو كبير في المنتصف أعلى الشاشة، حقول مرتفعة بحواف دائرية،
-/// زر دخول كبير بعرض الشاشة، رابط استرجاع كلمة المرور أسفله).
+/// شاشة الدخول: منطقة بيضا فوق فيها اللوجو والعنوان (زي ما كانت)،
+/// وتحتها بطاقة كحلية بحواف علوية دائرية فيها الحقول والزرار — بدل
+/// ما تكون الشاشة كلها بيضا. الألوان الثلاثة (أبيض/كحلي/سماوي) هي
+/// هوية ASJ الفعلية، مأخوذة من AppColors.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -75,151 +76,211 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _BrandHeader(),
-                  const SizedBox(height: 36),
-                  _RoundedField(
-                    controller: _usernameController,
-                    hint: 'اسم المستخدم',
-                    icon: Icons.person_outline,
-                  ),
-                  const SizedBox(height: 14),
-                  _RoundedField(
-                    controller: _passwordController,
-                    hint: 'كلمة المرور',
-                    icon: Icons.lock_outline,
-                    obscureText: _obscurePassword,
-                    onSubmitted: (_) => _submit(),
-                    suffix: IconButton(
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                        color: Colors.grey.shade600,
-                      ),
-                      onPressed: () => setState(
-                        () => _obscurePassword = !_obscurePassword,
-                      ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(24, 28, 24, 8),
+                      child: _BrandHeader(),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: isLoading ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(26),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      child: isLoading
-                          ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text('دخول'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: TextButton(
-                      onPressed: _showForgotPasswordNotice,
-                      child: Text(
-                        'نسيت كلمة المرور؟',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  Text(
-                    'الحسابات تُنشأ عبر مسؤول النظام فقط',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.grey.shade500,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ],
+                    Expanded(child: _NavyFormPanel(
+                      formKey: _formKey,
+                      usernameController: _usernameController,
+                      passwordController: _passwordController,
+                      obscurePassword: _obscurePassword,
+                      onToggleObscure: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      onSubmit: _submit,
+                      isLoading: isLoading,
+                      onForgotPassword: _showForgotPasswordNotice,
+                    )),
+                  ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
   }
 }
 
-/// رأس الشاشة: اللوجو + اسم النظام، بأسلوب "وردمارك" كبير في المنتصف
-/// (زي واجهات فيسبوك/انستجرام). استبدل الأيقونة داخل Container بصورة
-/// اللوجو الحقيقي بمجرد توفرها:
-///   Image.asset('assets/logo.png', width: 96, height: 96)
-/// (لا تنسَ إضافة المسار تحت flutter/assets في pubspec.yaml).
-/// نفس هيدر النسخة الأصلية (views/base.py -> render_header) بالضبط:
-/// نفس اللوجو المرسوم، نفس العنوان، نفس النص الفرعي، مع خط سماوي سفلي
-/// يحاكي `border-bottom: 3px solid #00D2FF` من style.css الأصلي.
+/// رأس الشاشة الأبيض: اللوجو الحقيقي + عنوان النظام + النص الفرعي.
 class _BrandHeader extends StatelessWidget {
   const _BrandHeader();
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const AsjLogo(size: 78),
+        const SizedBox(height: 12),
+        Text(
+          'ASJ MEDICAL SYSTEMS STORE',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+            color: AppColors.primary,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'نظام إدارة المستودعات',
+          style: TextStyle(
+            fontSize: 13,
+            color: AppColors.textMuted,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+}
+
+/// البطاقة الكحلية أسفل الشاشة: خط سماوي فاصل، حقول الدخول، زرار
+/// الدخول السماوي، رابط نسيان كلمة المرور، والنص السفلي — كلهم
+/// بألوان معدّلة عشان تبان واضحة فوق الخلفية الكحلية.
+class _NavyFormPanel extends StatelessWidget {
+  const _NavyFormPanel({
+    required this.formKey,
+    required this.usernameController,
+    required this.passwordController,
+    required this.obscurePassword,
+    required this.onToggleObscure,
+    required this.onSubmit,
+    required this.isLoading,
+    required this.onForgotPassword,
+  });
+
+  final GlobalKey<FormState> formKey;
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+  final bool obscurePassword;
+  final VoidCallback onToggleObscure;
+  final VoidCallback onSubmit;
+  final bool isLoading;
+  final VoidCallback onForgotPassword;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.only(bottom: 18),
+      width: double.infinity,
       decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: AsjLogoPainter.pulseColor, width: 3),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [AppColors.primary, AppColors.primaryDark],
+        ),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
         ),
       ),
-      child: Column(
-        children: [
-          const AsjLogo(size: 90),
-          const SizedBox(height: 10),
-          Text(
-            'ASJ MEDICAL SYSTEMS STORE',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1,
-              color: AppColors.primary,
+      padding: const EdgeInsets.fromLTRB(26, 34, 26, 24),
+      child: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 56,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
             ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'نظام إدارة المستودعات',
-            style: TextStyle(
-              fontSize: 13,
-              color: AppColors.textMuted,
+            const SizedBox(height: 28),
+            _RoundedField(
+              controller: usernameController,
+              hint: 'اسم المستخدم',
+              icon: Icons.person_outline,
             ),
-            textAlign: TextAlign.center,
-          ),
-        ],
+            const SizedBox(height: 14),
+            _RoundedField(
+              controller: passwordController,
+              hint: 'كلمة المرور',
+              icon: Icons.lock_outline,
+              obscureText: obscurePassword,
+              onSubmitted: (_) => onSubmit(),
+              suffix: IconButton(
+                icon: Icon(
+                  obscurePassword
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  color: Colors.grey.shade600,
+                ),
+                onPressed: onToggleObscure,
+              ),
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: isLoading ? null : onSubmit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: AppColors.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(26),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                child: isLoading
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: AppColors.primary,
+                        ),
+                      )
+                    : const Text('دخول'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: TextButton(
+                onPressed: onForgotPassword,
+                child: const Text(
+                  'نسيت كلمة المرور؟',
+                  style: TextStyle(
+                    color: AppColors.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              'الحسابات تُنشأ عبر مسؤول النظام فقط',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.45),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// حقل إدخال بأسلوب "بيضاوي" مرتفع بخلفية رمادية فاتحة بدون حدود بارزة،
-/// نفس روح حقول تسجيل الدخول في تطبيقات زي فيسبوك.
+/// حقل إدخال أبيض بحواف دائرية — بيبان واضح فوق خلفية البطاقة الكحلية.
 class _RoundedField extends StatelessWidget {
   const _RoundedField({
     required this.controller,
@@ -250,7 +311,7 @@ class _RoundedField extends StatelessWidget {
         prefixIcon: Icon(icon, color: Colors.grey.shade500),
         suffixIcon: suffix,
         filled: true,
-        fillColor: const Color(0xFFF0F2F5),
+        fillColor: Colors.white,
         contentPadding:
             const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
         border: OutlineInputBorder(
@@ -263,11 +324,11 @@ class _RoundedField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(28),
-          borderSide: BorderSide(color: AppColors.primary, width: 1.6),
+          borderSide: const BorderSide(color: AppColors.accent, width: 1.8),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(28),
-          borderSide: BorderSide(color: AppColors.danger, width: 1.4),
+          borderSide: const BorderSide(color: AppColors.danger, width: 1.4),
         ),
       ),
       validator: (v) => (v == null || v.isEmpty) ? 'مطلوب' : null,
