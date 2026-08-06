@@ -33,6 +33,8 @@ workflows:
           fi
       - name: تثبيت الحزم
         script: flutter pub get
+      - name: توليد أيقونة التطبيق
+        script: dart run flutter_launcher_icons
       - name: فحص شامل للكود قبل البناء
         script: |
           flutter analyze --no-fatal-infos || {
