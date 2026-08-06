@@ -13,6 +13,7 @@ import '../../inventory_summary/presentation/inventory_summary_screen.dart';
 import '../../analytics/presentation/analytics_screen.dart';
 import '../../export/presentation/export_screen.dart';
 import '../../admin/presentation/admin_home_screen.dart';
+import '../../knowledge_import/presentation/knowledge_import_screen.dart';
 import '../../settings/presentation/admin_settings_screen.dart';
 import '../../user_activity/presentation/user_activity_screen.dart';
 
@@ -136,6 +137,12 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       icon: Icons.person_search_outlined,
       requiredRole: UserRole.admin,
       builder: () => const UserActivityScreen(),
+    ),
+    _NavTab(
+      label: 'استيراد قاعدة المعرفة',
+      icon: Icons.upload_file_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const KnowledgeImportScreen(),
     ),
     _NavTab(
       label: 'الإعدادات',
