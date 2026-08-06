@@ -75,6 +75,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
         return Icons.delete_outline;
       case ActionType.out:
         return Icons.outbox_outlined;
+      case ActionType.return_:
+        return Icons.assignment_return_outlined;
       case ActionType.search:
         return Icons.search;
       case ActionType.login:
