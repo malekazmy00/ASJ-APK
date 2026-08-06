@@ -65,6 +65,20 @@ class KnowledgeBaseRepository {
         .eq('Part_Number', partNumber);
   }
 
+  /// إنشاء أو تحديث — تُستخدم من شاشة تعديل القطعة لحفظ حقول قاعدة
+  /// المعرفة المرتبطة برقم القطعة مباشرة، حتى لو السجل مش موجود بعد.
+  Future<void> upsertFields(String partNumber, Map<String, dynamic> fields) async {
+    final existing = await getByPartNumber(partNumber);
+    if (existing == null) {
+      await _client.from('specs_knowledge_base').insert({
+        'Part_Number': partNumber,
+        ...fields,
+      });
+    } else {
+      await updateFields(partNumber, fields);
+    }
+  }
+
   /// استيراد جماعي من CSV (شاشة الأدمن) — upsert على دفعات من 500 صف،
   /// بيستبدل بيانات رقم القطعة بالكامل لو موجود (عكس createOrAppendInsight
   /// اللي بتحمي البيانات الموثوقة من الكتابة فوقها تلقائياً من AI؛ هنا
