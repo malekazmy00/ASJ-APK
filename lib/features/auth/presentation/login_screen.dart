@@ -48,27 +48,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // تغيّر authControllerProvider - راجع core/router/app_router.dart
   }
 
-  void _showForgotPasswordNotice() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Text('نسيت كلمة المرور؟'),
-        content: const Text(
-          'تواصل مع مسؤول النظام (الأدمن) لإعادة تعيين كلمة المرور.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('حسناً'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final isLoading = ref.watch(authControllerProvider.notifier).isLoading;
@@ -97,7 +76,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           setState(() => _obscurePassword = !_obscurePassword),
                       onSubmit: _submit,
                       isLoading: isLoading,
-                      onForgotPassword: _showForgotPasswordNotice,
                     )),
                   ],
                 ),
@@ -145,8 +123,8 @@ class _BrandHeader extends StatelessWidget {
 }
 
 /// البطاقة الكحلية أسفل الشاشة: خط سماوي فاصل، حقول الدخول، زرار
-/// الدخول السماوي، رابط نسيان كلمة المرور، والنص السفلي — كلهم
-/// بألوان معدّلة عشان تبان واضحة فوق الخلفية الكحلية.
+/// الدخول السماوي، والنص السفلي — كلهم بألوان معدّلة عشان تبان واضحة
+/// فوق الخلفية الكحلية.
 class _NavyFormPanel extends StatelessWidget {
   const _NavyFormPanel({
     required this.formKey,
@@ -156,7 +134,6 @@ class _NavyFormPanel extends StatelessWidget {
     required this.onToggleObscure,
     required this.onSubmit,
     required this.isLoading,
-    required this.onForgotPassword,
   });
 
   final GlobalKey<FormState> formKey;
@@ -166,7 +143,6 @@ class _NavyFormPanel extends StatelessWidget {
   final VoidCallback onToggleObscure;
   final VoidCallback onSubmit;
   final bool isLoading;
-  final VoidCallback onForgotPassword;
 
   @override
   Widget build(BuildContext context) {
@@ -252,18 +228,6 @@ class _NavyFormPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Center(
-              child: TextButton(
-                onPressed: onForgotPassword,
-                child: const Text(
-                  'نسيت كلمة المرور؟',
-                  style: TextStyle(
-                    color: AppColors.accent,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
             const Spacer(),
             Text(
               'الحسابات تُنشأ عبر مسؤول النظام فقط',
