@@ -59,4 +59,13 @@ class LogRepository {
         .order('timestamp', ascending: false);
     return (rows as List).map((r) => TransactionLog.fromMap(r)).toList();
   }
+
+  /// سجل نشاط عام زمني (كل الحركات لكل القطع/المستخدمين) — مش مربوط
+  /// بقطعة أو مستخدم معين، مع فلتر فترة اختياري (اليوم/٧ أيام/٣٠ يوم).
+  Future<List<TransactionLog>> getRecent({DateTime? since, int limit = 300}) async {
+    var q = _client.from('transactions_log').select();
+    if (since != null) q = q.gte('timestamp', since.toIso8601String());
+    final rows = await q.order('timestamp', ascending: false).limit(limit);
+    return (rows as List).map((r) => TransactionLog.fromMap(r)).toList();
+  }
 }
