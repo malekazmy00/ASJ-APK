@@ -12,6 +12,7 @@ import '../../item_timeline/presentation/item_timeline_screen.dart';
 import '../../inventory_summary/presentation/inventory_summary_screen.dart';
 import '../../analytics/presentation/analytics_screen.dart';
 import '../../admin/presentation/admin_home_screen.dart';
+import '../../settings/presentation/admin_settings_screen.dart';
 import '../../user_activity/presentation/user_activity_screen.dart';
 
 /// وصف تبويب واحد في التنقّل الموحّد. إما مربوط بدور أدنى مطلوب
@@ -128,6 +129,12 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       icon: Icons.person_search_outlined,
       requiredRole: UserRole.admin,
       builder: () => const UserActivityScreen(),
+    ),
+    _NavTab(
+      label: 'الإعدادات',
+      icon: Icons.settings_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const AdminSettingsScreen(),
     ),
   ];
 
