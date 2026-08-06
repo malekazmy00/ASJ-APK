@@ -79,6 +79,7 @@ enum ActionType {
   update('UPDATE', 'تعديل'),
   delete('DELETE', 'حذف'),
   out('OUT', 'صرف'),
+  return_('RETURN', 'استرجاع'),
   search('SEARCH', 'بحث'),
   login('LOGIN', 'دخول'),
   logout('LOGOUT', 'خروج'),
