@@ -1,27 +1,176 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/models/app_user.dart';
+import '../../../core/widgets/locked_feature_placeholder.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../worker/presentation/worker_home_screen.dart';
+import '../../stickers/presentation/stickers_screen.dart';
 import '../../engineer/presentation/engineer_home_screen.dart';
+import '../../item_timeline/presentation/item_timeline_screen.dart';
+import '../../inventory_summary/presentation/inventory_summary_screen.dart';
+import '../../analytics/presentation/analytics_screen.dart';
 import '../../admin/presentation/admin_home_screen.dart';
+import '../../user_activity/presentation/user_activity_screen.dart';
 
-/// نقطة دخول واحدة بعد تسجيل الدخول، توجّه المستخدم لواجهة دوره مباشرة.
-class RoleHomeScreen extends ConsumerWidget {
+/// وصف تبويب واحد في التنقّل الموحّد. إما مربوط بدور أدنى مطلوب
+/// (requiredRole) وإما بصلاحية فردية يمنحها الأدمن (permission).
+class _NavTab {
+  final String label;
+  final IconData icon;
+  final Widget Function() builder;
+  final UserRole? requiredRole;
+  final bool Function(AppUser? user)? permission;
+
+  const _NavTab({
+    required this.label,
+    required this.icon,
+    required this.builder,
+    this.requiredRole,
+    this.permission,
+  });
+
+  bool isUnlocked(AppUser? user) {
+    if (user == null) return false;
+    if (user.role == UserRole.admin) return true; // الأدمن مفتوح له كل حاجة دايماً
+    if (requiredRole != null) return _roleLevel(user.role) >= _roleLevel(requiredRole!);
+    if (permission != null) return permission!(user);
+    return true;
+  }
+
+  static int _roleLevel(UserRole role) {
+    switch (role) {
+      case UserRole.worker:
+        return 1;
+      case UserRole.engineer:
+        return 2;
+      case UserRole.admin:
+        return 3;
+    }
+  }
+}
+
+/// نقطة الدخول الوحيدة بعد تسجيل الدخول. تنقّل موحّد لكل الأدوار: كل
+/// التبويبات ظاهرة لأي مستخدم بنفس الشكل بالظبط — دور المهندس بيشوف
+/// تبويبات الأدمن (مقفولة)، والعامل بيشوف تبويبات المهندس والأدمن
+/// (مقفولة)، وهكذا. الترتيب طبيعي: تبويبات العامل، بعدين المهندس،
+/// بعدين الأدمن.
+class RoleHomeScreen extends ConsumerStatefulWidget {
   const RoleHomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RoleHomeScreen> createState() => _RoleHomeScreenState();
+}
+
+class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
+    with SingleTickerProviderStateMixin {
+  late final List<_NavTab> _tabs = [
+    // -- تبويبات العامل --
+    _NavTab(
+      label: 'تسجيل قطعة',
+      icon: Icons.add_box_outlined,
+      requiredRole: UserRole.worker,
+      builder: () => const WorkerBody(),
+    ),
+    _NavTab(
+      label: 'الاستيكرات',
+      icon: Icons.sell_outlined,
+      requiredRole: UserRole.worker,
+      builder: () => const StickersScreen(),
+    ),
+    // -- تبويبات المهندس --
+    _NavTab(
+      label: 'بحث وصرف',
+      icon: Icons.search,
+      requiredRole: UserRole.engineer,
+      builder: () => const SmartSearchTab(),
+    ),
+    _NavTab(
+      label: 'لوحة التعديل',
+      icon: Icons.edit_note,
+      permission: (u) => u?.canEdit ?? false,
+      builder: () => const EditDashboardTab(),
+    ),
+    _NavTab(
+      label: 'تتبع قطعة',
+      icon: Icons.timeline_outlined,
+      permission: (u) => u?.canTrack ?? false,
+      builder: () => const ItemTimelineScreen(),
+    ),
+    _NavTab(
+      label: 'المخزون',
+      icon: Icons.inventory_2_outlined,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const InventorySummaryScreen(),
+    ),
+    _NavTab(
+      label: 'تحليل البيانات',
+      icon: Icons.bar_chart_outlined,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const AnalyticsScreen(),
+    ),
+    // -- تبويبات الأدمن --
+    _NavTab(
+      label: 'المستخدمون',
+      icon: Icons.people_outline,
+      requiredRole: UserRole.admin,
+      builder: () => const UsersTab(),
+    ),
+    _NavTab(
+      label: 'الإشعارات',
+      icon: Icons.notifications_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const NotificationsTab(),
+    ),
+    _NavTab(
+      label: 'تتبع مستخدم',
+      icon: Icons.person_search_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const UserActivityScreen(),
+    ),
+  ];
+
+  late final TabController _tabController = TabController(length: _tabs.length, vsync: this);
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider);
     if (user == null) return const SizedBox.shrink();
 
-    switch (user.role) {
-      case UserRole.worker:
-        return const WorkerHomeScreen();
-      case UserRole.engineer:
-        return const EngineerHomeScreen();
-      case UserRole.admin:
-        return const AdminHomeScreen();
-    }
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ASJ Medical Systems'),
+        backgroundColor: AppColors.primary,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          isScrollable: true,
+          tabs: _tabs
+              .map((t) => Tab(
+                    icon: Icon(t.isUnlocked(user) ? t.icon : Icons.lock_outline),
+                    text: t.label,
+                  ))
+              .toList(),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+          ),
+        ],
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: _tabs
+            .map((t) => t.isUnlocked(user) ? t.builder() : const LockedFeaturePlaceholder())
+            .toList(),
+      ),
+    );
   }
 }
