@@ -97,6 +97,24 @@ enum ActionType {
       );
 }
 
+/// سبب صرف القطعة — عمود exit_type الجديد في transactions_log (راجع
+/// migrations/002_add_exit_type.sql). يُستخدم في تحليل البيانات لعرض
+/// توزيع الصرف حسب السبب.
+enum ExitType {
+  sale('Sale', 'بيع'),
+  loan('Loan', 'إعارة مؤقت'),
+  damaged('Damaged', 'تالف');
+
+  const ExitType(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static ExitType fromDb(String? value) => ExitType.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => ExitType.sale,
+      );
+}
+
 const List<String> defaultItemTypes = [
   'بوردة',
   'أنبوبة أشعة',
