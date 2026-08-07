@@ -1,10 +1,17 @@
 // supabase/functions/analyze-part/index.ts
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
+//
+// يدعم أكتر من مفتاح Gemini (GEMINI_API_KEY, GEMINI_API_KEY_2,
+// GEMINI_API_KEY_3 - كلهم اختياريين عدا الأول). بيجرب كل نموذج مع كل
+// مفتاح بالترتيب قبل ما يصعّد للنموذج الأقوى اللي بعده، عشان لو مفتاح
+// واحد خلصت حصته أو فيه مشكلة فيه، الباقي يكمل الشغل من غيره.
+const GEMINI_KEYS = ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]
+  .map((name) => Deno.env.get(name))
+  .filter((v): v is string => !!v && v.trim() !== "");
 
 const MODEL_CHAIN = [
-  "gemini-2.0-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-2.5-pro",
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.1-pro",
 ];
 
 const PROMPT_TEMPLATE = (partNumber: string) => `أنت خبير فني متخصص في قطع غيار أجهزة التصوير الطبي (أشعة، رنين، أجهزة مختبرات).
@@ -41,6 +48,10 @@ const PROMPT_TEMPLATE = (partNumber: string) => `أنت خبير فني متخص
 
 Deno.serve(async (req) => {
   try {
+    if (GEMINI_KEYS.length === 0) {
+      return jsonResponse({ success: false, error: "لا يوجد أي مفتاح Gemini مضبوط على السيرفر" }, 500);
+    }
+
     const { partNumberOrText, imageBase64 } = await req.json();
 
     if (!partNumberOrText && !imageBase64) {
@@ -49,61 +60,63 @@ Deno.serve(async (req) => {
 
     const effectiveText = partNumberOrText || "غير معروف - يرجى التعرف على القطعة من الصورة مباشرة";
     const prompt = PROMPT_TEMPLATE(effectiveText);
-    let lastError = "فشل بعد تجربة كل النماذج المتاحة";
+    let lastError = "فشل بعد تجربة كل النماذج والمفاتيح المتاحة";
 
     for (const model of MODEL_CHAIN) {
-      try {
-        const parts: unknown[] = [{ text: prompt }];
-        if (imageBase64) {
-          parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
-        }
+      for (const apiKey of GEMINI_KEYS) {
+        try {
+          const parts: unknown[] = [{ text: prompt }];
+          if (imageBase64) {
+            parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
+          }
 
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts }],
-              generationConfig: { temperature: 0.1, topP: 0.95, topK: 40, maxOutputTokens: 1024 },
-            }),
-          },
-        );
-
-        if (res.status === 429) {
-          lastError = "الباقة انتهت على هذا النموذج، جرّب نموذج أقوى";
-          continue;
-        }
-        if (!res.ok) {
-          lastError = `خطأ من Gemini: ${res.status} - ${await res.text()}`;
-          continue;
-        }
-
-        const data = await res.json();
-        let text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-
-        const parsed = JSON.parse(text);
-        return jsonResponse(
-          {
-            success: true,
-            result: {
-              Brand: parsed.Brand ?? "Unknown",
-              Category: parsed.Category ?? "Unknown",
-              Part_Number: parsed.Part_Number ?? effectiveText,
-              Serial_Number: parsed.Serial_Number ?? "",
-              Compatible_Model: parsed.Compatible_Model ?? "",
-              Additional_Compatibility: parsed.Additional_Compatibility ?? "",
-              Market_Value: parsed.Market_Value ?? "",
-              Gemini_Insights: parsed.Gemini_Insights ?? "تم الفحص بنجاح",
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: { temperature: 0.1, topP: 0.95, topK: 40, maxOutputTokens: 1024 },
+              }),
             },
-          },
-          200,
-        );
-      } catch (innerError) {
-        console.error(`Model ${model} failed:`, innerError);
-        lastError = String(innerError);
-        continue;
+          );
+
+          if (res.status === 429) {
+            lastError = "الباقة انتهت على هذا المفتاح/النموذج، جرّب مفتاح أو نموذج أقوى";
+            continue;
+          }
+          if (!res.ok) {
+            lastError = `خطأ من Gemini: ${res.status} - ${await res.text()}`;
+            continue;
+          }
+
+          const data = await res.json();
+          let text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+          const parsed = JSON.parse(text);
+          return jsonResponse(
+            {
+              success: true,
+              result: {
+                Brand: parsed.Brand ?? "Unknown",
+                Category: parsed.Category ?? "Unknown",
+                Part_Number: parsed.Part_Number ?? effectiveText,
+                Serial_Number: parsed.Serial_Number ?? "",
+                Compatible_Model: parsed.Compatible_Model ?? "",
+                Additional_Compatibility: parsed.Additional_Compatibility ?? "",
+                Market_Value: parsed.Market_Value ?? "",
+                Gemini_Insights: parsed.Gemini_Insights ?? "تم الفحص بنجاح",
+              },
+            },
+            200,
+          );
+        } catch (innerError) {
+          console.error(`Model ${model} failed:`, innerError);
+          lastError = String(innerError);
+          continue;
+        }
       }
     }
 
