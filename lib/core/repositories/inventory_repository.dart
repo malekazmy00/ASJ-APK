@@ -5,6 +5,28 @@ import '../models/inventory_item.dart';
 class InventoryRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
+  Future<InventoryItem?> getById(int itemId) async {
+    final rows = await _client
+        .from('inventory_items')
+        .select()
+        .eq('item_id', itemId)
+        .limit(1);
+    final list = rows as List;
+    if (list.isEmpty) return null;
+    return InventoryItem.fromMap(list.first);
+  }
+
+  /// كل القطع بترتيب زمني - تُستخدم في شاشة الاستيكرات (تصفح مباشر
+  /// من غير بحث إجباري) وأي شاشة تانية محتاجة قائمة كاملة.
+  Future<List<InventoryItem>> getAll({int limit = 300}) async {
+    final rows = await _client
+        .from('inventory_items')
+        .select()
+        .order('item_id', ascending: false)
+        .limit(limit);
+    return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
+  }
+
   Future<List<InventoryItem>> getByPartNumber(String partNumber) async {
     final rows = await _client
         .from('inventory_items')
@@ -14,12 +36,38 @@ class InventoryRepository {
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
 
-  /// بحث نصي مرن (زي البحث الذكي عند المهندس) على part_number أو item_type.
+  /// بحث موحّد بالـ ID أو رقم القطعة أو السريال أو الموديل (الاسم
+  /// الكودي في قاعدة المعرفة) أو الوصف — نفس البحث المستخدم في كل
+  /// شاشات المهندس/العامل.
   Future<List<InventoryItem>> smartSearch(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return [];
+    final asInt = int.tryParse(trimmed);
+
+    // لو النص اتطابق مع موديل (اسم كودي) في قاعدة المعرفة، هات كل
+    // أرقام القطع المرتبطة بيه كمان
+    final kbRows = await _client
+        .from('specs_knowledge_base')
+        .select('Part_Number')
+        .ilike('Part_Model', '%$trimmed%')
+        .limit(50);
+    final modelPartNumbers =
+        (kbRows as List).map((r) => r['Part_Number'] as String).toSet();
+
+    final orParts = <String>[
+      'part_number.ilike.%$trimmed%',
+      'serial_number.ilike.%$trimmed%',
+      'description.ilike.%$trimmed%',
+    ];
+    if (asInt != null) orParts.add('item_id.eq.$asInt');
+    for (final pn in modelPartNumbers) {
+      orParts.add('part_number.eq.${pn.replaceAll(',', '')}');
+    }
+
     final rows = await _client
         .from('inventory_items')
         .select()
-        .or('part_number.ilike.%$query%,item_type.ilike.%$query%')
+        .or(orParts.join(','))
         .order('created_at', ascending: false)
         .limit(100);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
