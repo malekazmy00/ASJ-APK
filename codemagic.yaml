@@ -22,9 +22,14 @@ workflows:
           cat >> android/build.gradle.kts << 'EOF'
 
           subprojects {
-              afterEvaluate {
-                  extensions.findByType(com.android.build.gradle.BaseExtension::class.java)?.let {
-                      it.compileSdkVersion(36)
+              plugins.withId("com.android.application") {
+                  extensions.configure(com.android.build.gradle.BaseExtension::class.java) {
+                      compileSdkVersion(36)
+                  }
+              }
+              plugins.withId("com.android.library") {
+                  extensions.configure(com.android.build.gradle.BaseExtension::class.java) {
+                      compileSdkVersion(36)
                   }
               }
           }
