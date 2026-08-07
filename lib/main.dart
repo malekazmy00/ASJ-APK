@@ -46,6 +46,7 @@ class AsjApp extends ConsumerWidget {
       title: 'ASJ Medical Systems Store',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      themeMode: ThemeMode.light,
       routerConfig: router,
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar'), Locale('en')],
