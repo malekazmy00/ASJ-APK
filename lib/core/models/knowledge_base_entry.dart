@@ -3,6 +3,7 @@
 /// ...) كما هي، لازم تُستخدم بنفس الحالة (case) بالضبط في كل استعلام.
 class KnowledgeBaseEntry {
   final String partNumber;
+  final String? partModel; // الاسم الكودي/موديل القطعة نفسها (مختلف عن الجهاز المتوافق)
   final String? brand;
   final String? category;
   final String? compatibleModel;
@@ -13,6 +14,7 @@ class KnowledgeBaseEntry {
 
   const KnowledgeBaseEntry({
     required this.partNumber,
+    this.partModel,
     this.brand,
     this.category,
     this.compatibleModel,
@@ -25,6 +27,7 @@ class KnowledgeBaseEntry {
   factory KnowledgeBaseEntry.fromMap(Map<String, dynamic> map) {
     return KnowledgeBaseEntry(
       partNumber: map['Part_Number'] as String? ?? '',
+      partModel: map['Part_Model'] as String?,
       brand: map['Brand'] as String?,
       category: map['Category'] as String?,
       compatibleModel: map['Compatible_Model'] as String?,
