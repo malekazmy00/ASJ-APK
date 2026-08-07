@@ -124,3 +124,49 @@ const List<String> defaultItemTypes = [
   'محرك',
   'قطعة أخرى',
 ];
+
+/// نوع الإدخال: قطعة غيار عادية أو عدة/معدة شغل (عمود entry_type الجديد).
+enum EntryType {
+  part('Part', 'قطعة'),
+  equipment('Equipment', 'معدة شغل');
+
+  const EntryType(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static EntryType fromDb(String? value) => EntryType.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => EntryType.part,
+      );
+}
+
+/// نوع طلب الموافقة المعلّق (جدول pending_approvals الجديد).
+enum ApprovalType {
+  partNumberEdit('part_number_edit', 'تعديل رقم القطعة'),
+  serialEdit('serial_edit', 'تعديل الرقم التسلسلي'),
+  kbImport('kb_import', 'استيراد قاعدة المعرفة');
+
+  const ApprovalType(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static ApprovalType fromDb(String? value) => ApprovalType.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => ApprovalType.partNumberEdit,
+      );
+}
+
+enum ApprovalStatus {
+  pending('Pending', 'قيد الانتظار'),
+  approved('Approved', 'تمت الموافقة'),
+  rejected('Rejected', 'مرفوض');
+
+  const ApprovalStatus(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static ApprovalStatus fromDb(String? value) => ApprovalStatus.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => ApprovalStatus.pending,
+      );
+}
