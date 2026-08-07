@@ -178,7 +178,12 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
         backgroundColor: AppColors.primary,
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
+          indicatorColor: AppColors.accent,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white.withValues(alpha: 0.55),
+          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 11.5),
           isScrollable: true,
           tabs: _tabs
               .map((t) => Tab(
