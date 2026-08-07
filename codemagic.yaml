@@ -38,6 +38,12 @@ workflows:
           fi
       - name: تثبيت الحزم
         script: flutter pub get
+      - name: رفع compileSdk لـ 36 لكل المكتبات (بعد إنشاء local.properties)
+        script: |
+          PROPS=android/local.properties
+          if ! grep -q 'flutter.compileSdkVersion' "$PROPS" 2>/dev/null; then
+            echo "flutter.compileSdkVersion=36" >> "$PROPS"
+          fi
       - name: توليد أيقونة التطبيق
         script: dart run flutter_launcher_icons
       - name: فحص شامل للكود قبل البناء
