@@ -17,23 +17,10 @@ workflows:
           echo "المتغيرات موجودة، SUPABASE_URL يبدأ بـ: $(echo $SUPABASE_URL | cut -c1-25)..."
       - name: توليد مجلدات المنصة الناقصة
         script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
-      - name: إجبار كل المكتبات (مش بس التطبيق) على compileSdk 36
+      - name: رفع compileSdk لـ 36 لكل المكتبات (الطريقة الرسمية عبر local.properties)
         script: |
-          cat >> android/build.gradle.kts << 'EOF'
-
-          subprojects {
-              plugins.withId("com.android.application") {
-                  extensions.configure(com.android.build.gradle.BaseExtension::class.java) {
-                      compileSdkVersion(36)
-                  }
-              }
-              plugins.withId("com.android.library") {
-                  extensions.configure(com.android.build.gradle.BaseExtension::class.java) {
-                      compileSdkVersion(36)
-                  }
-              }
-          }
-          EOF
+          echo "flutter.compileSdkVersion=36" >> android/local.properties
+          echo "flutter.targetSdkVersion=36" >> android/local.properties
       - name: تنظيف ملف الاختبار الافتراضي
         script: |
           rm -f test/widget_test.dart
