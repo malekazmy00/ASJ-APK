@@ -17,11 +17,18 @@ workflows:
           echo "المتغيرات موجودة، SUPABASE_URL يبدأ بـ: $(echo $SUPABASE_URL | cut -c1-25)..."
       - name: توليد مجلدات المنصة الناقصة
         script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
-      - name: رفع compileSdk لـ 36 (مطلوب لمكتبات الباركود/الملفات)
+      - name: إجبار كل المكتبات (مش بس التطبيق) على compileSdk 36
         script: |
-          GRADLE=android/app/build.gradle.kts
-          awk '{gsub(/compileSdk = flutter.compileSdkVersion/, "compileSdk = 36"); print}' "$GRADLE" > /tmp/gradle_tmp.kts
-          mv /tmp/gradle_tmp.kts "$GRADLE"
+          cat >> android/build.gradle.kts << 'EOF'
+
+          subprojects {
+              afterEvaluate {
+                  extensions.findByType(com.android.build.gradle.BaseExtension::class.java)?.let {
+                      it.compileSdkVersion(36)
+                  }
+              }
+          }
+          EOF
       - name: تنظيف ملف الاختبار الافتراضي
         script: |
           rm -f test/widget_test.dart
@@ -38,12 +45,6 @@ workflows:
           fi
       - name: تثبيت الحزم
         script: flutter pub get
-      - name: رفع compileSdk لـ 36 لكل المكتبات (بعد إنشاء local.properties)
-        script: |
-          PROPS=android/local.properties
-          if ! grep -q 'flutter.compileSdkVersion' "$PROPS" 2>/dev/null; then
-            echo "flutter.compileSdkVersion=36" >> "$PROPS"
-          fi
       - name: توليد أيقونة التطبيق
         script: dart run flutter_launcher_icons
       - name: فحص شامل للكود قبل البناء
