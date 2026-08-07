@@ -45,4 +45,18 @@ class AppUser {
       status: map['status'] as String? ?? 'Active',
     );
   }
+
+  /// لتخزين حالة الدخول محلياً (SharedPreferences) عشان الحساب يفضل
+  /// مسجّل دخول حتى بعد إغلاق التطبيق فعلياً، من غير الحاجة لكلمة
+  /// المرور تاني — الخروج الوحيد الحقيقي هو زرار الخروج الصريح.
+  Map<String, dynamic> toMap() {
+    return {
+      'username': username,
+      'role': role.name,
+      'can_export': canExport,
+      'can_track': canTrack,
+      'can_edit': canEdit,
+      'status': status,
+    };
+  }
 }
