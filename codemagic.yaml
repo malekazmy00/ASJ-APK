@@ -17,6 +17,10 @@ workflows:
           echo "المتغيرات موجودة، SUPABASE_URL يبدأ بـ: $(echo $SUPABASE_URL | cut -c1-25)..."
       - name: توليد مجلدات المنصة الناقصة
         script: flutter create . --platforms=android --project-name asj_medical_store --org com.asjmedical
+      - name: رفع compileSdk لـ 36 (مطلوب لمكتبات الباركود/الملفات)
+        script: |
+          GRADLE=android/app/build.gradle.kts
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' "$GRADLE"
       - name: تنظيف ملف الاختبار الافتراضي
         script: |
           rm -f test/widget_test.dart
