@@ -12,7 +12,7 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
   try {
-    const { username, password, role, can_export, can_track, can_edit } =
+    const { username, password, role, can_export, can_track, can_edit, createdBy } =
       await req.json();
 
     if (!username || !password || !role) {
@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
       can_track: can_track ?? false,
       can_edit: can_edit ?? false,
       status: "Active",
+      created_by: createdBy ?? null,
     });
 
     if (error) {
