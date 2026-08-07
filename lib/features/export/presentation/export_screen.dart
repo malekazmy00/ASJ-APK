@@ -45,9 +45,7 @@ class _ExportScreenState extends State<ExportScreen> {
       final file = File('${dir.path}/${fileLabel}_$timestamp.csv');
       await file.writeAsString(csvString, encoding: const _Utf8BomEncoding());
 
-      await SharePlus.instance.share(
-        ShareParams(files: [XFile(file.path)], subject: fileLabel),
-      );
+      await Share.shareXFiles([XFile(file.path)], subject: fileLabel);
     } catch (e) {
       _showSnack('فشل التصدير: $e', isError: true);
     } finally {
