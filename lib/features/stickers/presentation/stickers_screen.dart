@@ -3,11 +3,12 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
+import '../../../core/widgets/barcode_scanner_page.dart';
 
 /// معاينة استيكر القطعة (رقم القطعة + Serial لو موجود + كود QR).
-/// الطباعة الفعلية عبر طابعة متصلة، والمسح بالسكانر الفيزيائي، لسه
-/// مؤجلين (محتاجين صلاحية نظام Bluetooth/كاميرا تُطلب وقت الاستخدام،
-/// مش جزء من هذه الدفعة).
+/// القائمة بتظهر مباشرة من غير ما تحتاج تبحث الأول (تصفح حر)، ولو
+/// كتبت رقم الـ ID بتاع القطعة بالظبط بتقفز لاستيكرها على طول.
+/// الطباعة الفعلية عبر طابعة متصلة لسه مؤجلة.
 class StickersScreen extends StatefulWidget {
   const StickersScreen({super.key});
 
@@ -20,15 +21,53 @@ class _StickersScreenState extends State<StickersScreen> {
   final _controller = TextEditingController();
   List<InventoryItem> _results = [];
   InventoryItem? _selected;
-  bool _loading = false;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    setState(() => _loading = true);
+    final items = await _repo.getAll();
+    if (mounted) {
+      setState(() {
+        _results = items;
+        _loading = false;
+      });
+    }
+  }
 
   Future<void> _search() async {
     final q = _controller.text.trim();
-    if (q.isEmpty) return;
+    if (q.isEmpty) {
+      setState(() => _selected = null);
+      await _loadAll();
+      return;
+    }
+
     setState(() {
       _loading = true;
       _selected = null;
     });
+
+    // لو الإدخال رقم صافي، دور بالـ ID مباشرة وقفز لاستيكرها على طول
+    final asId = int.tryParse(q);
+    if (asId != null) {
+      final item = await _repo.getById(asId);
+      if (item != null) {
+        if (mounted) {
+          setState(() {
+            _selected = item;
+            _loading = false;
+          });
+        }
+        return;
+      }
+    }
+
     final items = await _repo.smartSearch(q);
     if (mounted) {
       setState(() {
@@ -46,40 +85,76 @@ class _StickersScreenState extends State<StickersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  hintText: 'ابحث برقم القطعة...',
-                  prefixIcon: Icon(Icons.search),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  textAlign: TextAlign.right,
+                  decoration: InputDecoration(
+                    hintText: 'دوّر برقم القطعة أو الـ ID (اختياري)...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.qr_code_scanner),
+                      tooltip: 'مسح باركود',
+                      onPressed: () async {
+                        final code = await scanBarcode(context);
+                        if (code != null && code.isNotEmpty) {
+                          _controller.text = code;
+                          _search();
+                        }
+                      },
+                    ),
+                  ),
+                  onSubmitted: (_) => _search(),
+                  onChanged: (_) => _search(),
                 ),
-                onSubmitted: (_) => _search(),
               ),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: _loading ? null : _search,
-              child: const Text('بحث'),
-            ),
-          ],
+            ],
+          ),
         ),
-        const SizedBox(height: 16),
-        if (_loading) const Center(child: CircularProgressIndicator()),
-        if (!_loading && _results.isNotEmpty && _selected == null)
-          ..._results.map((item) => Card(
-                child: ListTile(
-                  title: Text('${item.partNumber} — ${item.itemType}', textAlign: TextAlign.right),
-                  subtitle: Text('#${item.itemId}', textAlign: TextAlign.right),
-                  onTap: () => setState(() => _selected = item),
+        if (_loading) const LinearProgressIndicator(),
+        if (_selected != null)
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                TextButton.icon(
+                  onPressed: () => setState(() => _selected = null),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('رجوع للقائمة'),
                 ),
-              )),
-        if (_selected != null) _StickerPreview(item: _selected!),
+                _StickerPreview(item: _selected!),
+              ],
+            ),
+          )
+        else if (!_loading && _results.isEmpty)
+          const Expanded(
+            child: Center(
+              child: Text('لا توجد قطع مسجّلة بعد.', style: TextStyle(color: AppColors.textMuted)),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _results.length,
+              itemBuilder: (context, index) {
+                final item = _results[index];
+                return Card(
+                  child: ListTile(
+                    title: Text('${item.partNumber} — ${item.itemType}', textAlign: TextAlign.right),
+                    subtitle: Text('#${item.itemId}', textAlign: TextAlign.right),
+                    onTap: () => setState(() => _selected = item),
+                  ),
+                );
+              },
+            ),
+          ),
       ],
     );
   }
