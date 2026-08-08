@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/repositories/notification_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// إعدادات الأدمن: تغيير كلمة المرور الشخصية + فحص حالة الاتصال بـ
-/// Gemini. المكان الوحيد اللي بيغطي المشكلتين المتكررتين (#16، #22).
+/// Gemini + تشغيل/إيقاف كل نوع إشعار لوحده.
 class AdminSettingsScreen extends ConsumerStatefulWidget {
   const AdminSettingsScreen({super.key});
 
@@ -22,6 +23,41 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
 
   bool? _geminiOk; // null = لسه ماتفحصش
   bool _checkingGemini = false;
+
+  final _notificationRepo = NotificationRepository();
+  Map<String, bool> _notifSettings = {};
+  bool _loadingNotifSettings = true;
+
+  static const _notifTypeLabels = {
+    'new_query': 'استعلام جديد',
+    'part_number_edit': 'تعديل رقم قطعة',
+    'serial_edit': 'تعديل رقم تسلسلي',
+    'kb_import': 'استيراد قاعدة معرفة',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifSettings();
+  }
+
+  Future<void> _loadNotifSettings() async {
+    setState(() => _loadingNotifSettings = true);
+    final settings = await _notificationRepo.getAllSettings();
+    if (mounted) {
+      setState(() {
+        _notifSettings = {
+          for (final type in _notifTypeLabels.keys) type: settings[type] ?? true,
+        };
+        _loadingNotifSettings = false;
+      });
+    }
+  }
+
+  Future<void> _toggleNotifType(String type, bool value) async {
+    setState(() => _notifSettings[type] = value);
+    await _notificationRepo.setTypeEnabled(type, value);
+  }
 
   @override
   void dispose() {
@@ -136,6 +172,22 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
               ),
             ],
           ),
+        ),
+        _SectionCard(
+          title: 'الإشعارات',
+          child: _loadingNotifSettings
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: _notifTypeLabels.entries.map((entry) {
+                    return SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _notifSettings[entry.key] ?? true,
+                      onChanged: (v) => _toggleNotifType(entry.key, v),
+                      title: Text(entry.value, textAlign: TextAlign.right),
+                    );
+                  }).toList(),
+                ),
         ),
         _SectionCard(
           title: 'تغيير كلمة المرور',
