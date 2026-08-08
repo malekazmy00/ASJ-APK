@@ -24,6 +24,57 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Map<String, int> _exitReasonBreakdown = {};
   List<MapEntry<DateTime, int>> _trend = [];
 
+  static const _chartLabels = {
+    'stats': 'أرقام سريعة (إجمالي/أسبوع/شهر)',
+    'status': 'توزيع حالة المخزون',
+    'ownership': 'الصيانة/الأمانة الآن',
+    'exit_reason': 'سبب الصرف',
+    'trend': 'اتجاه الصرف',
+  };
+  Set<String> _visibleCharts = _chartLabels.keys.toSet();
+
+  Future<void> _pickVisibleCharts() async {
+    final selection = Set<String>.from(_visibleCharts);
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('اختار المؤشرات اللي عاوز تشوفها'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: _chartLabels.entries.map((entry) {
+                return CheckboxListTile(
+                  value: selection.contains(entry.key),
+                  title: Text(entry.value, textAlign: TextAlign.right),
+                  onChanged: (v) => setDialogState(() {
+                    if (v == true) {
+                      selection.add(entry.key);
+                    } else {
+                      selection.remove(entry.key);
+                    }
+                  }),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(selection),
+              child: const Text('تم'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) setState(() => _visibleCharts = result);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -77,94 +128,121 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Row(
-            children: [
-              Expanded(child: _StatCard(label: 'إجمالي القطع', value: '$_totalItems')),
-              const SizedBox(width: 10),
-              Expanded(child: _StatCard(label: 'صرف هذا الأسبوع', value: '$_dispatchedWeek')),
-              const SizedBox(width: 10),
-              Expanded(child: _StatCard(label: 'صرف هذا الشهر', value: '$_dispatchedMonth')),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          _ChartCard(
-            title: 'توزيع حالة المخزون',
-            child: SfCircularChart(
-              legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
-              series: <CircularSeries>[
-                PieSeries<_Slice, String>(
-                  dataSource: statusData,
-                  xValueMapper: (d, _) => d.label,
-                  yValueMapper: (d, _) => d.value,
-                  dataLabelSettings: const DataLabelSettings(isVisible: true),
-                  pointColorMapper: (d, i) => _statusColor(d.label),
-                ),
-              ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: _pickVisibleCharts,
+              icon: const Icon(Icons.tune, size: 16),
+              label: const Text('اختار المؤشرات'),
             ),
           ),
-          const SizedBox(height: 16),
-
-          _ChartCard(
-            title: 'القطع الموجودة للصيانة/الأمانة الآن ($inCustodyCount)',
-            child: SfCircularChart(
-              legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
-              series: <CircularSeries>[
-                DoughnutSeries<_Slice, String>(
-                  dataSource: ownershipData,
-                  xValueMapper: (d, _) => d.label,
-                  yValueMapper: (d, _) => d.value,
-                  dataLabelSettings: const DataLabelSettings(isVisible: true),
-                ),
+          const SizedBox(height: 12),
+          if (_visibleCharts.contains('stats')) ...[
+            Row(
+              children: [
+                Expanded(child: _StatCard(label: 'إجمالي القطع', value: '$_totalItems')),
+                const SizedBox(width: 10),
+                Expanded(child: _StatCard(label: 'صرف هذا الأسبوع', value: '$_dispatchedWeek')),
+                const SizedBox(width: 10),
+                Expanded(child: _StatCard(label: 'صرف هذا الشهر', value: '$_dispatchedMonth')),
               ],
             ),
-          ),
-          const SizedBox(height: 16),
+            const SizedBox(height: 20),
+          ],
 
-          _ChartCard(
-            title: 'توزيع الصرف حسب السبب — آخر 30 يوم',
-            child: exitReasonData.isEmpty
-                ? const Center(
-                    child: Text(
-                      'لا توجد حركات صرف مسجّلة بسبب محدد بعد',
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
-                      textAlign: TextAlign.center,
-                    ),
-                  )
-                : SfCircularChart(
-                    legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
-                    series: <CircularSeries>[
-                      PieSeries<_Slice, String>(
-                        dataSource: exitReasonData,
-                        xValueMapper: (d, _) => d.label,
-                        yValueMapper: (d, _) => d.value,
-                        dataLabelSettings: const DataLabelSettings(isVisible: true),
-                      ),
-                    ],
+          if (_visibleCharts.contains('status')) ...[
+            _ChartCard(
+              title: 'توزيع حالة المخزون',
+              child: SfCircularChart(
+                legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
+                series: <CircularSeries>[
+                  PieSeries<_Slice, String>(
+                    dataSource: statusData,
+                    xValueMapper: (d, _) => d.label,
+                    yValueMapper: (d, _) => d.value,
+                    dataLabelSettings: const DataLabelSettings(isVisible: true),
+                    pointColorMapper: (d, i) => _statusColor(d.label),
                   ),
-          ),
-          const SizedBox(height: 16),
-
-          _ChartCard(
-            title: 'اتجاه الصرف — آخر 30 يوم',
-            child: SfCartesianChart(
-              primaryXAxis: DateTimeAxis(
-                dateFormat: null,
-                intervalType: DateTimeIntervalType.days,
-                interval: 5,
+                ],
               ),
-              primaryYAxis: const NumericAxis(minimum: 0),
-              series: <CartesianSeries>[
-                LineSeries<MapEntry<DateTime, int>, DateTime>(
-                  dataSource: _trend,
-                  xValueMapper: (e, _) => e.key,
-                  yValueMapper: (e, _) => e.value,
-                  color: AppColors.accent,
-                  markerSettings: const MarkerSettings(isVisible: true),
-                ),
-              ],
             ),
-          ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_visibleCharts.contains('ownership')) ...[
+            _ChartCard(
+              title: 'القطع الموجودة للصيانة/الأمانة الآن ($inCustodyCount)',
+              child: SfCircularChart(
+                legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
+                series: <CircularSeries>[
+                  DoughnutSeries<_Slice, String>(
+                    dataSource: ownershipData,
+                    xValueMapper: (d, _) => d.label,
+                    yValueMapper: (d, _) => d.value,
+                    dataLabelSettings: const DataLabelSettings(isVisible: true),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_visibleCharts.contains('exit_reason')) ...[
+            _ChartCard(
+              title: 'توزيع الصرف حسب السبب — آخر 30 يوم',
+              child: exitReasonData.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'لا توجد حركات صرف مسجّلة بسبب محدد بعد',
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : SfCircularChart(
+                      legend: const Legend(isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
+                      series: <CircularSeries>[
+                        PieSeries<_Slice, String>(
+                          dataSource: exitReasonData,
+                          xValueMapper: (d, _) => d.label,
+                          yValueMapper: (d, _) => d.value,
+                          dataLabelSettings: const DataLabelSettings(isVisible: true),
+                        ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_visibleCharts.contains('trend'))
+            _ChartCard(
+              title: 'اتجاه الصرف — آخر 30 يوم',
+              child: SfCartesianChart(
+                primaryXAxis: DateTimeAxis(
+                  dateFormat: null,
+                  intervalType: DateTimeIntervalType.days,
+                  interval: 5,
+                ),
+                primaryYAxis: const NumericAxis(minimum: 0),
+                series: <CartesianSeries>[
+                  LineSeries<MapEntry<DateTime, int>, DateTime>(
+                    dataSource: _trend,
+                    xValueMapper: (e, _) => e.key,
+                    yValueMapper: (e, _) => e.value,
+                    color: AppColors.accent,
+                    markerSettings: const MarkerSettings(isVisible: true),
+                  ),
+                ],
+              ),
+            ),
+
+          if (_visibleCharts.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 40),
+              child: Center(
+                child: Text('مفيش أي مؤشر مختار — دوس "اختار المؤشرات" لتظهر حاجة',
+                    style: TextStyle(color: AppColors.textMuted)),
+              ),
+            ),
         ],
       ),
     );
