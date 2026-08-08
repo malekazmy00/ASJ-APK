@@ -32,4 +32,37 @@ class UserRepository {
   Future<void> updateRole(String username, String role) async {
     await _client.from('users').update({'role': role}).eq('username', username);
   }
+
+  /// تحكم فردي لكل حساب في ظهور تبويب معيّن، فوق افتراضي الدور
+  /// (جدول user_tab_overrides الجديد). null = مفيش تخصيص، يتبع افتراضي الدور.
+  Future<Map<String, bool>> getTabOverrides(String username) async {
+    final rows = await _client
+        .from('user_tab_overrides')
+        .select('tab_id, enabled')
+        .eq('username', username);
+    return {for (final r in rows as List) r['tab_id'] as String: r['enabled'] as bool};
+  }
+
+  Future<void> setTabOverride(
+    String username,
+    String tabId,
+    bool enabled, {
+    required String updatedBy,
+  }) async {
+    await _client.from('user_tab_overrides').upsert({
+      'username': username,
+      'tab_id': tabId,
+      'enabled': enabled,
+      'updated_by': updatedBy,
+      'updated_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<void> clearTabOverride(String username, String tabId) async {
+    await _client
+        .from('user_tab_overrides')
+        .delete()
+        .eq('username', username)
+        .eq('tab_id', tabId);
+  }
 }
