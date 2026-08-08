@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
@@ -9,6 +12,8 @@ import '../../../core/models/knowledge_base_entry.dart';
 import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
+import '../../../core/repositories/approval_repository.dart';
+import '../../../core/repositories/notification_repository.dart';
 import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../../core/widgets/barcode_scanner_page.dart';
@@ -40,6 +45,7 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
   final _queryRepo = EngineerQueryRepository();
+  final _notificationRepo = NotificationRepository();
 
   bool _isSearching = false;
   bool _hasSearched = false;
@@ -122,6 +128,13 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
         actionType: ActionType.search,
         username: username,
         details: 'بحث عن: $query',
+      );
+
+      // إشعار الأدمن بكل استعلام جديد (بيتجاهل بصمت لو النوع ده موقوف
+      // من الإعدادات)
+      await _notificationRepo.create(
+        notifType: 'new_query',
+        message: 'استعلام جديد من $username عن "$query"',
       );
 
       // تفضيل تصفير الحقول الإضافية بعد كل بحث ناجح عشان البحث الجاي
@@ -663,10 +676,17 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _inventoryRepo = InventoryRepository();
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
+  final _approvalRepo = ApprovalRepository();
+  final _notificationRepo = NotificationRepository();
+  final _picker = ImagePicker();
 
   bool _loading = true;
   bool _saving = false;
+  bool _reanalyzing = false;
+  XFile? _pickedImage;
 
+  late final TextEditingController _partNumberField;
+  late final TextEditingController _partModelField;
   late final TextEditingController _locationField;
   late final TextEditingController _serialField;
   ItemCondition _condition = ItemCondition.used;
@@ -684,12 +704,14 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   void initState() {
     super.initState();
     final item = widget.item;
+    _partNumberField = TextEditingController(text: item.partNumber == 'PENDING' ? '' : item.partNumber);
     _locationField = TextEditingController(text: item.location ?? '');
     _serialField = TextEditingController(text: item.serialNumber ?? '');
     _condition = ItemCondition.fromDb(item.condition);
     _status = ItemStatus.fromDb(item.status);
     _ownership = OwnershipStatus.fromDb(item.ownershipStatus);
 
+    _partModelField = TextEditingController();
     _brandField = TextEditingController();
     _categoryField = TextEditingController();
     _compatibleModelField = TextEditingController();
@@ -703,6 +725,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     final kb = await _knowledgeRepo.getByPartNumber(widget.item.partNumber);
     if (kb != null && mounted) {
       setState(() {
+        _partModelField.text = kb.partModel ?? '';
         _brandField.text = kb.brand ?? '';
         _categoryField.text = kb.category ?? '';
         _compatibleModelField.text = kb.compatibleModel ?? '';
@@ -716,6 +739,8 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
 
   @override
   void dispose() {
+    _partNumberField.dispose();
+    _partModelField.dispose();
     _locationField.dispose();
     _serialField.dispose();
     _brandField.dispose();
@@ -727,21 +752,149 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     super.dispose();
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    final file = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1280);
+    if (file != null) setState(() => _pickedImage = file);
+  }
+
+  /// إعادة تحليل بصورة جديدة — بيملى الحقول للمراجعة، ومش بيحفظ لوحده،
+  /// المهندس لازم يدوس "حفظ" بعدها زي أي تعديل تاني.
+  Future<void> _reanalyze() async {
+    if (_pickedImage == null && _partNumberField.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('التقط صورة أو اكتب رقم القطعة الأول')),
+      );
+      return;
+    }
+    setState(() => _reanalyzing = true);
+    try {
+      String? imageBase64;
+      if (_pickedImage != null) {
+        final bytes = await File(_pickedImage!.path).readAsBytes();
+        imageBase64 = base64Encode(bytes);
+      }
+      final response = await Supabase.instance.client.functions.invoke(
+        'analyze-part',
+        body: {
+          'partNumberOrText': _partNumberField.text.trim().isNotEmpty
+              ? _partNumberField.text.trim()
+              : 'غير معروف - حلل من الصورة',
+          if (imageBase64 != null) 'imageBase64': imageBase64,
+        },
+      );
+      final data = response.data;
+      if (data is! Map || data['success'] != true) {
+        final errMsg = (data is Map ? data['error'] : null) ?? 'رد غير متوقع من الخادم';
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('تعذر التحليل: $errMsg'), backgroundColor: AppColors.danger),
+          );
+        }
+        return;
+      }
+      final result = Map<String, dynamic>.from(data['result'] as Map);
+      setState(() {
+        if ((result['Part_Number'] as String? ?? '').isNotEmpty) {
+          _partNumberField.text = result['Part_Number'];
+        }
+        if ((result['Part_Model'] as String? ?? '').isNotEmpty) {
+          _partModelField.text = result['Part_Model'];
+        }
+        if ((result['Serial_Number'] as String? ?? '').isNotEmpty) {
+          _serialField.text = result['Serial_Number'];
+        }
+        _brandField.text = result['Brand'] ?? _brandField.text;
+        _categoryField.text = result['Category'] ?? _categoryField.text;
+        _compatibleModelField.text = result['Compatible_Model'] ?? _compatibleModelField.text;
+        _additionalCompatField.text = result['Additional_Compatibility'] ?? _additionalCompatField.text;
+        _marketValueField.text = result['Market_Value'] ?? _marketValueField.text;
+        _insightsField.text = result['Gemini_Insights'] ?? _insightsField.text;
+        _pickedImage = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في التحليل: $e'), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reanalyzing = false);
+    }
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
+      final originalPartNumber = widget.item.partNumber;
+      final originalSerial = widget.item.serialNumber ?? '';
+      final newPartNumber = _partNumberField.text.trim().isEmpty
+          ? originalPartNumber
+          : _partNumberField.text.trim();
+      final newSerial = _serialField.text.trim();
+      final partNumberChanged = newPartNumber != originalPartNumber;
+      final serialChanged = newSerial != originalSerial;
+
+      // الحقول العادية بتتحدث فوراً. رقم القطعة والسريال بس، لو
+      // اتغيروا، بيروحوا لطلب موافقة الأدمن بدل ما يتحفظوا على طول.
       await _inventoryRepo.updateFields(widget.item.itemId!, {
         'location': _locationField.text.trim().isEmpty ? null : _locationField.text.trim(),
-        'serial_number': _serialField.text.trim().isEmpty ? null : _serialField.text.trim(),
         'condition': _condition.dbValue,
         'status': _status.dbValue,
         'ownership_status': _ownership.dbValue,
+        if (!serialChanged) 'serial_number': newSerial.isEmpty ? null : newSerial,
       });
 
+      await _logRepo.logAction(
+        itemId: widget.item.itemId,
+        actionType: ActionType.update,
+        username: widget.username,
+        details: 'تعديل بيانات القطعة (الموقع/الحالة الفنية/حالة الملكية)',
+      );
+
+      final pendingLabels = <String>[];
+      if (partNumberChanged) {
+        await _approvalRepo.create(
+          type: ApprovalType.partNumberEdit,
+          payload: {
+            'itemId': widget.item.itemId,
+            'oldPartNumber': originalPartNumber,
+            'newPartNumber': newPartNumber,
+          },
+          requestedBy: widget.username,
+        );
+        await _notificationRepo.create(
+          notifType: 'part_number_edit',
+          message: '${widget.username} طلب تعديل رقم القطعة #${widget.item.itemId} '
+              'من "$originalPartNumber" إلى "$newPartNumber"',
+        );
+        pendingLabels.add('رقم القطعة');
+      }
+      if (serialChanged) {
+        await _approvalRepo.create(
+          type: ApprovalType.serialEdit,
+          payload: {
+            'itemId': widget.item.itemId,
+            'oldSerial': originalSerial,
+            'newSerial': newSerial,
+          },
+          requestedBy: widget.username,
+        );
+        await _notificationRepo.create(
+          notifType: 'serial_edit',
+          message: '${widget.username} طلب تعديل الرقم التسلسلي للقطعة #${widget.item.itemId} '
+              'من "$originalSerial" إلى "$newSerial"',
+        );
+        pendingLabels.add('الرقم التسلسلي');
+      }
+
+      // قاعدة المعرفة (البراند/الموديل/الفئة...) بتتحدث فوراً من غير
+      // موافقة — دي مرتبطة برقم القطعة الحالي (القديم) لحد ما طلب
+      // التعديل لو موجود يتوافق عليه.
       final kbFields = <String, dynamic>{};
       void addIfNotEmpty(String key, String value) {
         if (value.trim().isNotEmpty) kbFields[key] = value.trim();
       }
+      addIfNotEmpty('Part_Model', _partModelField.text);
       addIfNotEmpty('Brand', _brandField.text);
       addIfNotEmpty('Category', _categoryField.text);
       addIfNotEmpty('Compatible_Model', _compatibleModelField.text);
@@ -749,10 +902,20 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
       addIfNotEmpty('Market_Value', _marketValueField.text);
       addIfNotEmpty('Gemini_Insights', _insightsField.text);
       if (kbFields.isNotEmpty) {
-        await _knowledgeRepo.upsertFields(widget.item.partNumber, kbFields);
+        await _knowledgeRepo.upsertFields(originalPartNumber, kbFields);
       }
 
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        if (pendingLabels.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('اتبعت طلب تعديل ${pendingLabels.join(' و')} للأدمن للموافقة'),
+              backgroundColor: AppColors.warning,
+            ),
+          );
+        }
+        Navigator.of(context).pop();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -843,8 +1006,67 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               ),
             ],
             const SizedBox(height: 16),
+            Text('إعادة تحليل بصورة (اختياري)', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
+            const SizedBox(height: 8),
+            if (_pickedImage != null)
+              Stack(
+                alignment: Alignment.topLeft,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(File(_pickedImage!.path), height: 130, width: double.infinity, fit: BoxFit.cover),
+                  ),
+                  IconButton.filled(
+                    onPressed: () => setState(() => _pickedImage = null),
+                    style: IconButton.styleFrom(backgroundColor: AppColors.danger),
+                    icon: const Icon(Icons.close, size: 18, color: Colors.white),
+                  ),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _pickImage(ImageSource.camera),
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('صورة جديدة'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _reanalyzing ? null : _reanalyze,
+                      icon: _reanalyzing
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.auto_awesome),
+                      label: const Text('إعادة تحليل'),
+                    ),
+                  ),
+                ],
+              ),
+            if (_pickedImage != null) ...[
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: _reanalyzing ? null : _reanalyze,
+                icon: _reanalyzing
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.auto_awesome),
+                label: const Text('حلّل الصورة دي'),
+              ),
+            ],
+            const SizedBox(height: 16),
             Text('بيانات المخزون', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
             const SizedBox(height: 8),
+            TextField(
+              controller: _partNumberField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(
+                labelText: 'رقم القطعة',
+                helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+              ),
+            ),
+            const SizedBox(height: 10),
             TextField(
               controller: _locationField,
               textAlign: TextAlign.right,
@@ -854,7 +1076,10 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
             TextField(
               controller: _serialField,
               textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الرقم التسلسلي (Serial)'),
+              decoration: const InputDecoration(
+                labelText: 'الرقم التسلسلي (Serial)',
+                helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+              ),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<ItemStatus>(
@@ -887,54 +1112,15 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
             Text('قاعدة المعرفة الفنية', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
             const SizedBox(height: 8),
             TextField(
+              controller: _partModelField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الموديل (الاسم الكودي)'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
               controller: _brandField,
               textAlign: TextAlign.right,
               decoration: const InputDecoration(labelText: 'البراند'),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: _categoryField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الفئة/الوصف'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _compatibleModelField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الجهاز المتوافق'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _additionalCompatField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'أجهزة متوافقة إضافية'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _marketValueField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'السعر التقريبي'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _insightsField,
-              textAlign: TextAlign.right,
-              maxLines: 3,
-              decoration: const InputDecoration(labelText: 'ملاحظات فنية'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('حفظ كل التعديلات'),
-            ),
-            const SizedBox(height: 12),
-          ],
-        );
-      },
-    );
-  }
-}
+            T
