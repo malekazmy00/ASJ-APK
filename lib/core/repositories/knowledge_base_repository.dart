@@ -32,6 +32,11 @@ class KnowledgeBaseRepository {
   ///   لحد ما يتملى يدوياً من شاشة التعديل.
   /// - موجود: مايكتبش فوق Brand/Compatible_Model الموثوقين، يضيف أي
   ///   بيانات جديدة كملاحظة فقط (مطلوب دمجها يدوياً بمعرفة المستخدم).
+  /// نفس منطق الحفظ في views/worker.py الأصلي بالظبط (سطر ai_data):
+  /// - غير موجود: يكتب Part_Number + Gemini_Insights بس، الباقي فاضي
+  ///   لحد ما يتملى يدوياً من شاشة التعديل.
+  /// - موجود: مايلمسش Brand/Compatible_Model الموثوقين خالص، لكن يضيف
+  ///   الملاحظة الجديدة فوق القديمة (مفصولة بـ "---") لو مش مكررة.
   Future<void> createOrAppendInsight({
     required String partNumber,
     required String geminiInsights,
@@ -94,6 +99,8 @@ class KnowledgeBaseRepository {
   /// بيستبدل بيانات رقم القطعة بالكامل لو موجود (عكس createOrAppendInsight
   /// اللي بتحمي البيانات الموثوقة من الكتابة فوقها تلقائياً من AI؛ هنا
   /// الأدمن نفسه اللي بيستورد البيانات بقرار واعي، فمفيش داعي للحماية).
+  /// ملاحظة: بتتنادى دلوقتي من resolve-approval بس (بعد الموافقة)،
+  /// مش مباشرة من شاشة الاستيراد.
   Future<int> bulkUpsert(List<Map<String, dynamic>> rows) async {
     const batchSize = 500;
     var imported = 0;
@@ -103,5 +110,21 @@ class KnowledgeBaseRepository {
       imported += batch.length;
     }
     return imported;
+  }
+
+  /// كل صفوف قاعدة المعرفة خام - تُستخدم لأخذ نسخة احتياطية كاملة قبل
+  /// أي استيراد جديد (kb_import_backups).
+  Future<List<Map<String, dynamic>>> getAllRaw() async {
+    final rows = await _client.from('specs_knowledge_base').select();
+    return (rows as List).cast<Map<String, dynamic>>();
+  }
+
+  /// ياخد نسخة احتياطية من قاعدة المعرفة بالكامل قبل تطبيق استيراد جديد.
+  Future<void> backupSnapshot(String createdBy) async {
+    final snapshot = await getAllRaw();
+    await _client.from('kb_import_backups').insert({
+      'snapshot': snapshot,
+      'created_by': createdBy,
+    });
   }
 }
