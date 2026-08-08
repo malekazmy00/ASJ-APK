@@ -1,9 +1,15 @@
 /// يطابق core/models.py -> InventoryItem (جدول inventory_items)
-/// + عمود ownership_status الجديد (راجع migrations/002).
+/// + الأعمدة الجديدة (راجع migrations/002 و003).
+/// ملاحظة: الاسم الكودي/موديل القطعة نفسها (part_model) مش هنا — هو
+/// صفة لنوع القطعة زي البراند بالظبط، فمكانه specs_knowledge_base
+/// (راجع KnowledgeBaseEntry.partModel) مش هنا.
 class InventoryItem {
   final int? itemId;
   final String itemType;
   final String partNumber;
+  final String? description; // للإدخال من غير رقم قطعة
+  final String? notes;
+  final String entryType; // Part / Equipment
   final String? location;
   final String? condition;
   final String? imagePath; // مؤجل استخدامه حالياً (راجع قرار تأجيل الصور)
@@ -18,6 +24,9 @@ class InventoryItem {
     this.itemId,
     this.itemType = 'بوردة',
     required this.partNumber,
+    this.description,
+    this.notes,
+    this.entryType = 'Part',
     this.location,
     this.condition,
     this.imagePath,
@@ -34,6 +43,9 @@ class InventoryItem {
       itemId: map['item_id'] as int?,
       itemType: map['item_type'] as String? ?? 'بوردة',
       partNumber: map['part_number'] as String? ?? 'PENDING',
+      description: map['description'] as String?,
+      notes: map['notes'] as String?,
+      entryType: map['entry_type'] as String? ?? 'Part',
       location: map['location'] as String?,
       condition: map['condition'] as String?,
       imagePath: map['image_path'] as String?,
@@ -54,6 +66,9 @@ class InventoryItem {
     return {
       'item_type': itemType,
       'part_number': partNumber,
+      if (description != null) 'description': description,
+      if (notes != null) 'notes': notes,
+      'entry_type': entryType,
       if (location != null) 'location': location,
       if (condition != null) 'condition': condition,
       if (serialNumber != null) 'serial_number': serialNumber,
