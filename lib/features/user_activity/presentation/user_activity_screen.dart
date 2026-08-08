@@ -206,6 +206,7 @@ class _SessionsList extends StatelessWidget {
                 isOpen ? 'مفتوحة حالياً' : 'مقفولة',
                 if (s.duration != null) 'المدة: ${_formatDuration(s.duration!)}',
                 if (s.deviceInfo != null && s.deviceInfo!.isNotEmpty) s.deviceInfo!,
+                if (s.ipAddress != null && s.ipAddress!.isNotEmpty) 'IP: ${s.ipAddress}',
               ].join('  •  '),
               textAlign: TextAlign.right,
             ),
