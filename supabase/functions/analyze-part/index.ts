@@ -18,18 +18,23 @@ const PROMPT_TEMPLATE = (partNumber: string) => `أنت خبير فني متخص
 المعلومة المتاحة لديك عن القطعة: '${partNumber}'
 (ملحوظة: المعلومة دي ممكن تكون رقم قطعة بس، أو اسم/نص وصفي بس، أو الاتنين مع بعض موضحين بعلامة |)
 
+استخدم أداة البحث المتاحة لك فعلياً للتأكد من رقم القطعة ده ومعرفة بياناته
+الحقيقية بدل الاعتماد على معلوماتك العامة بس. الجهاز المتوافق (Compatible_Model)
+لازم يكون اسم موديل جهاز طبي حقيقي ومحدد (مثلاً "GE BrightSpeed" أو "Siemens
+Somatom Definition") مش تصنيف عام زي "جهاز أشعة مقطعية".
+
 لو مرفقة معك صورة، مطلوب منك تحدد العناصر التالية بدقة وبشكل منفصل تماماً عن بعض:
 
 1) رقم القطعة (Part Number): الكود المطبوع أو المحفور اللي بيمثل رقمها الرسمي عند الشركة المصنعة، غالباً قريب من كلمات زي P/N أو REF أو Art.Nr أو Part No.
-2) الرقم التسلسلي (Serial Number): كود مختلف تماماً عن رقم القطعة، عادة قريب من كلمة S/N أو Serial، وبيكون فريد لكل قطعة فردية. لو لقيت رقم زي كده، حطه في Serial_Number منفصل تماماً - لا تخلطه أبداً مع Part_Number.
-3) اسم/وصف القطعة: يعني إيه القطعة دي فعلياً (مثلاً "بوردة تغذية كهربائية").
-4) لا تخلط أي من الاتنين فوق مع رقم الدفعة (Batch/Lot Number) أو تاريخ التصنيع.
+2) الموديل/الاسم الكودي (Part_Model): كود أو اسم تاني للقطعة نفسها (مش الجهاز اللي بتركب فيه) — بعض القطع بتتعرف بيه بجانب رقم القطعة، لو موجود اكتبه.
+3) الرقم التسلسلي (Serial Number): كود مختلف تماماً عن رقم القطعة، عادة قريب من كلمة S/N أو Serial، وبيكون فريد لكل قطعة فردية. لو لقيت رقم زي كده، حطه في Serial_Number منفصل تماماً - لا تخلطه أبداً مع Part_Number. الرقم التسلسلي ميجيش من البحث خالص، من الصورة بس لو موجود عليها.
+4) اسم/وصف القطعة: يعني إيه القطعة دي فعلياً (مثلاً "بوردة تغذية كهربائية").
+5) لا تخلط أي من الاتنين فوق مع رقم الدفعة (Batch/Lot Number) أو تاريخ التصنيع.
 
 - لو المعلومة المتاحة لديك فيها الاتنين (رقم ونص) بالفعل، استخدمهم كما هم.
 - لو معاك واحد بس منهم وكانت معاك صورة، حاول تقرأ التاني من الصورة نفسها.
 - لو مقدرتش تقرأ رقم القطعة أو الرقم التسلسلي نهائياً، سيب الحقل فاضياً ووضح ده في الملاحظات.
 
-تعليمات "Compatible_Model": اسم جهاز طبي محدد وحقيقي، مش تصنيف عام.
 تعليمات "Market_Value": نطاق سعر تقديري حقيقي بالدولار.
 
 اكتب ردك بالكامل بلغة عربية فصحى طبيعية وسليمة.
@@ -38,13 +43,14 @@ const PROMPT_TEMPLATE = (partNumber: string) => `أنت خبير فني متخص
 - "Brand"
 - "Category"
 - "Part_Number"
+- "Part_Model"
 - "Serial_Number"
 - "Compatible_Model"
 - "Additional_Compatibility"
 - "Market_Value"
 - "Gemini_Insights"
 
-أرجع JSON فقط بدون أي نص إضافي.`;
+أرجع JSON فقط بدون أي نص إضافي (حتى لو استخدمت أداة البحث، ما تحطش أي مصادر أو روابط في الرد، JSON نظيف بس).`;
 
 Deno.serve(async (req) => {
   try {
@@ -77,6 +83,7 @@ Deno.serve(async (req) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 contents: [{ parts }],
+                tools: [{ google_search: {} }],
                 generationConfig: { temperature: 0.1, topP: 0.95, topK: 40, maxOutputTokens: 1024 },
               }),
             },
@@ -94,6 +101,12 @@ Deno.serve(async (req) => {
           const data = await res.json();
           let text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
           text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+          // لو أداة البحث ضافت أي نص قبل/بعد الـ JSON، ناخد أول { لحد آخر }
+          const firstBrace = text.indexOf("{");
+          const lastBrace = text.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            text = text.substring(firstBrace, lastBrace + 1);
+          }
 
           const parsed = JSON.parse(text);
           return jsonResponse(
@@ -103,6 +116,7 @@ Deno.serve(async (req) => {
                 Brand: parsed.Brand ?? "Unknown",
                 Category: parsed.Category ?? "Unknown",
                 Part_Number: parsed.Part_Number ?? effectiveText,
+                Part_Model: parsed.Part_Model ?? "",
                 Serial_Number: parsed.Serial_Number ?? "",
                 Compatible_Model: parsed.Compatible_Model ?? "",
                 Additional_Compatibility: parsed.Additional_Compatibility ?? "",
