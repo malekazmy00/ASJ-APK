@@ -6,18 +6,22 @@ import '../models/user_session.dart';
 class UserSessionRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
-  /// يُستدعى فور نجاح تسجيل الدخول (راجع AuthController.login).
+  /// يُستدعى فور نجاح تسجيل الدخول (راجع AuthController.login). بيعدي
+  /// على Edge Function `open-session` بدل إدراج مباشر، عشان الـ IP
+  /// يتقرا من السيرفر (التطبيق نفسه مش عنده وسيلة موثوقة يعرف بيها
+  /// عنوان الـ IP بتاعه).
   Future<int?> openSession(String username, {String? deviceInfo}) async {
-    final rows = await _client
-        .from('user_sessions')
-        .insert({
-          'username': username,
-          if (deviceInfo != null) 'device_info': deviceInfo,
-        })
-        .select('id');
-    final list = rows as List;
-    if (list.isEmpty) return null;
-    return list.first['id'] as int?;
+    try {
+      final response = await _client.functions.invoke(
+        'open-session',
+        body: {'username': username, if (deviceInfo != null) 'deviceInfo': deviceInfo},
+      );
+      final data = response.data as Map<String, dynamic>?;
+      if (data?['success'] == true) return data?['sessionId'] as int?;
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// heartbeat بسيط لتحديث آخر نشاط - يُستدعى دورياً أو عند كل عملية مهمة.
