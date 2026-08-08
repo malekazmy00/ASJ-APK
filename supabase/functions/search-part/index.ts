@@ -16,8 +16,8 @@ const MODEL_CHAIN = [
 ];
 
 const PROMPT_TEMPLATE = (query: string) => `أنت خبير فني متخصص في قطع غيار أجهزة التصوير الطبي (أشعة، رنين، أجهزة مختبرات).
-استخدم أداة البحث المتاحة لك فعلياً للتأكد من القطعة دي بدل الاعتماد على
-معلوماتك العامة بس، وديني أفضل إجابة ممكنة، حتى لو المعلومة مش مؤكدة 100%:
+استخدم أفضل معرفتك العامة عن القطعة دي، وديني أفضل إجابة ممكنة، حتى لو
+المعلومة مش مؤكدة 100%:
 '${query}'
 
 اكتب ردك بالكامل بلغة عربية فصحى طبيعية وسليمة. الجهاز المتوافق
@@ -59,14 +59,14 @@ Deno.serve(async (req) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                tools: [{ google_search: {} }],
                 generationConfig: { temperature: 0.2, topP: 0.95, topK: 40, maxOutputTokens: 512 },
               }),
             },
           );
 
           if (res.status === 429) {
-            lastError = "الباقة انتهت على هذا المفتاح/النموذج، جرّب مفتاح أو نموذج أقوى";
+            const bodyText = await res.text();
+            lastError = `فشل على ${model} (429): ${bodyText}`;
             continue;
           }
           if (!res.ok) {
