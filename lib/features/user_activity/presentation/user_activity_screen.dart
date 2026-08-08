@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/models/transaction_log.dart';
 import '../../../core/models/user_session.dart';
-import '../../../core/models/enums.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/user_session_repository.dart';
 import '../../../core/theme/app_theme.dart';
