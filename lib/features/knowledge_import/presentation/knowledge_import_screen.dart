@@ -2,27 +2,39 @@ import 'dart:convert';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/models/enums.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
+import '../../../core/repositories/approval_repository.dart';
+import '../../../core/repositories/notification_repository.dart';
+import '../../auth/presentation/auth_providers.dart';
 
 /// استيراد قاعدة المعرفة الفنية (specs_knowledge_base) من ملف CSV —
 /// نفس القطع اللي بتتفتش فعلياً في البحث قبل/جنب Gemini. الأعمدة
 /// المتوقعة في أول صف بالملف بالظبط (بحروف كبيرة/صغيرة زي القاعدة):
-/// Part_Number, Brand, Category, Compatible_Model,
+/// Part_Number, Part_Model, Brand, Category, Compatible_Model,
 /// Additional_Compatibility, Market_Value, Gemini_Insights.
 /// Part_Number وحده إلزامي، الباقي اختياري.
-class KnowledgeImportScreen extends StatefulWidget {
+///
+/// الاستيراد مش بيتطبّق فوراً — بياخد نسخة احتياطية كاملة من القاعدة
+/// الأول، وبعدين بيتبعت كطلب موافقة للأدمن (زي تعديل رقم القطعة/السريال
+/// بالظبط)، ومايتطبقش فعلياً إلا بعد الموافقة من تبويب "الموافقات".
+class KnowledgeImportScreen extends ConsumerStatefulWidget {
   const KnowledgeImportScreen({super.key});
 
   @override
-  State<KnowledgeImportScreen> createState() => _KnowledgeImportScreenState();
+  ConsumerState<KnowledgeImportScreen> createState() => _KnowledgeImportScreenState();
 }
 
-class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
+class _KnowledgeImportScreenState extends ConsumerState<KnowledgeImportScreen> {
   final _repo = KnowledgeBaseRepository();
+  final _approvalRepo = ApprovalRepository();
+  final _notificationRepo = NotificationRepository();
 
   static const _allowedColumns = [
     'Part_Number',
+    'Part_Model',
     'Brand',
     'Category',
     'Compatible_Model',
@@ -35,14 +47,17 @@ class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
   String? _fileName;
   int _parsedRows = 0;
   int _mergedDuplicates = 0;
-  int? _importedCount;
+  bool _submitted = false;
   String? _error;
 
-  Future<void> _pickAndImport() async {
+  Future<void> _pickAndSubmit() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+
     setState(() {
       _loading = true;
       _error = null;
-      _importedCount = null;
+      _submitted = false;
       _fileName = null;
       _parsedRows = 0;
       _mergedDuplicates = 0;
@@ -127,14 +142,27 @@ class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
         _mergedDuplicates = totalRows - merged.length;
       });
 
-      final imported = await _repo.bulkUpsert(merged.values.toList());
+      // نسخة احتياطية كاملة من القاعدة قبل ما الطلب يتبعت، بغض النظر
+      // هل هيتوافق عليه ولا لأ — الاحتياط جاهز من هنا.
+      await _repo.backupSnapshot(username);
+
+      await _approvalRepo.create(
+        type: ApprovalType.kbImport,
+        payload: {'rows': merged.values.toList(), 'fileName': picked.name},
+        requestedBy: username,
+      );
+      await _notificationRepo.create(
+        notifType: 'kb_import',
+        message: '$username طلب استيراد ${merged.length} رقم قطعة لقاعدة المعرفة من ملف "${picked.name}"',
+      );
+
       setState(() {
-        _importedCount = imported;
+        _submitted = true;
         _loading = false;
       });
     } catch (e) {
       setState(() {
-        _error = 'فشل الاستيراد: $e';
+        _error = 'فشل تجهيز الطلب: $e';
         _loading = false;
       });
     }
@@ -164,19 +192,19 @@ class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Part_Number إلزامي، الباقي اختياري. الرقم اللي يتكرر جوه الملف نفسه بيتدمج تلقائياً، ولو رقم القطعة موجود أصلاً في القاعدة هيتحدّث ببيانات الملف.',
+                  'Part_Number إلزامي، الباقي اختياري. الرقم اللي يتكرر جوه الملف نفسه بيتدمج تلقائياً. الاستيراد بياخد نسخة احتياطية من القاعدة أولاً، وبعدين بيتبعت لموافقة الأدمن — مش هيتطبق إلا بعد الموافقة من تبويب "الموافقات".',
                   style: TextStyle(fontSize: 11, color: AppColors.textMuted, height: 1.6),
                   textAlign: TextAlign.right,
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
-                  onPressed: _loading ? null : _pickAndImport,
+                  onPressed: _loading ? null : _pickAndSubmit,
                   icon: _loading
                       ? const SizedBox(
                           width: 16, height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_file_outlined),
-                  label: Text(_loading ? 'جارٍ الاستيراد...' : 'اختيار ملف CSV واستيراده'),
+                  label: Text(_loading ? 'جارٍ التجهيز...' : 'اختيار ملف CSV وإرساله للموافقة'),
                 ),
               ],
             ),
@@ -205,7 +233,7 @@ class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
                           textAlign: TextAlign.right),
                     ),
                   ],
-                  if (_importedCount != null) ...[
+                  if (_submitted) ...[
                     const SizedBox(height: 8),
                     Text('صفوف اتقرأت: $_parsedRows', textAlign: TextAlign.right),
                     if (_mergedDuplicates > 0)
@@ -215,14 +243,16 @@ class _KnowledgeImportScreenState extends State<KnowledgeImportScreen> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: AppColors.success.withValues(alpha: 0.1),
+                        color: AppColors.warning.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.success),
+                        border: Border.all(color: AppColors.warning),
                       ),
-                      child: Text('تم استيراد $_importedCount رقم قطعة بنجاح',
-                          style: const TextStyle(
-                              color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 12.5),
-                          textAlign: TextAlign.right),
+                      child: const Text(
+                        'اتبعت نسخة احتياطية وطلب موافقة — راجع تبويب "الموافقات" لتفعيل الاستيراد فعلياً.',
+                        style: TextStyle(
+                            color: AppColors.warning, fontWeight: FontWeight.bold, fontSize: 12.5),
+                        textAlign: TextAlign.right,
+                      ),
                     ),
                   ],
                 ],
