@@ -12,7 +12,7 @@ const GEMINI_KEYS = ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]
 const MODEL_CHAIN = [
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
-  "gemini-3.1-pro",
+  "gemini-3.1-pro-preview",
 ];
 
 const PROMPT_TEMPLATE = (query: string) => `أنت خبير فني متخصص في قطع غيار أجهزة التصوير الطبي (أشعة، رنين، أجهزة مختبرات).
