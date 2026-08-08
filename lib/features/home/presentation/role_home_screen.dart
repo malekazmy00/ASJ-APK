@@ -20,6 +20,7 @@ import '../../settings/presentation/admin_settings_screen.dart';
 import '../../user_activity/presentation/user_activity_screen.dart';
 import '../../account/presentation/my_account_screen.dart';
 import '../../advanced_search/presentation/advanced_search_screen.dart';
+import '../../approvals/presentation/approvals_screen.dart';
 
 /// وصف تبويب واحد في التنقّل الموحّد. لازم id ثابت مميّز (يُستخدم في
 /// user_tab_overrides). إما مربوط بدور أدنى مطلوب (requiredRole) وإما
@@ -155,6 +156,13 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       icon: Icons.notifications_outlined,
       requiredRole: UserRole.admin,
       builder: () => const NotificationsTab(),
+    ),
+    _NavTab(
+      id: 'approvals',
+      label: 'الموافقات',
+      icon: Icons.pending_actions,
+      requiredRole: UserRole.admin,
+      builder: () => const ApprovalsScreen(),
     ),
     _NavTab(
       id: 'user_activity',
