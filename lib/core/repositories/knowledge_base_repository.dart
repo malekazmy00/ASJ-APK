@@ -32,11 +32,6 @@ class KnowledgeBaseRepository {
   ///   لحد ما يتملى يدوياً من شاشة التعديل.
   /// - موجود: مايكتبش فوق Brand/Compatible_Model الموثوقين، يضيف أي
   ///   بيانات جديدة كملاحظة فقط (مطلوب دمجها يدوياً بمعرفة المستخدم).
-  /// نفس منطق الحفظ في views/worker.py الأصلي بالضبط (سطر ai_data):
-  /// - غير موجود: يكتب Part_Number + Gemini_Insights بس، الباقي فاضي
-  ///   لحد ما يتملى يدوياً من شاشة التعديل.
-  /// - موجود: مايلمسش Brand/Compatible_Model الموثوقين خالص، لكن يضيف
-  ///   الملاحظة الجديدة فوق القديمة (مفصولة بـ "---") لو مش مكررة.
   Future<void> createOrAppendInsight({
     required String partNumber,
     required String geminiInsights,
@@ -76,6 +71,22 @@ class KnowledgeBaseRepository {
       });
     } else {
       await updateFields(partNumber, fields);
+    }
+  }
+
+  /// يكتب الموديل (الاسم الكودي) بس لو لسه مش متسجّل، بنفس فلسفة حماية
+  /// البيانات الموثوقة من الكتابة فوقها تلقائياً من AI (زي Brand
+  /// وCompatible_Model بالظبط).
+  Future<void> setPartModelIfEmpty(String partNumber, String partModel) async {
+    if (partModel.trim().isEmpty) return;
+    final existing = await getByPartNumber(partNumber);
+    if (existing == null) {
+      await _client.from('specs_knowledge_base').insert({
+        'Part_Number': partNumber,
+        'Part_Model': partModel.trim(),
+      });
+    } else if (existing.partModel == null || existing.partModel!.trim().isEmpty) {
+      await updateFields(partNumber, {'Part_Model': partModel.trim()});
     }
   }
 
