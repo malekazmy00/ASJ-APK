@@ -32,7 +32,7 @@ class KnowledgeBaseEntry {
       category: map['Category'] as String?,
       compatibleModel: map['Compatible_Model'] as String?,
       additionalCompatibility: map['Additional_Compatibility'] as String?,
-      marketValue: map['market_value'] as String?,
+      marketValue: map['Market_Value'] as String?,
       geminiInsights: map['Gemini_Insights'] as String?,
       lastUpdated: map['last_updated'] != null
           ? DateTime.tryParse(map['last_updated'].toString())
