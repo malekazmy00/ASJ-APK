@@ -93,17 +93,120 @@ class InventoryRepository {
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
 
-  /// الداشبورد التجميعي (المرحلة 3): تجميع حسب part_number مع العدد.
-  /// PostgREST لا يدعم GROUP BY مباشرة عبر select العادي، لذلك الأنسب
-  /// إنشاء View جاهزة في Supabase (راجع migrations/002_grouped_view.sql)
-  /// واستدعاؤها هنا بدل التجميع يدوياً على الجهاز.
-  Future<List<Map<String, dynamic>>> getGroupedByPartNumber() async {
-    final rows = await _client
-        .from('inventory_items_grouped') // View — راجع ملف الـ migration
-        .select()
-        .order('qty', ascending: false);
-    return (rows as List).cast<Map<String, dynamic>>();
+  /// ============================================================
+  /// الجولة الثالثة (نقطة ٢ و٣): تبويب المخزون + تبويب البحث بالبطاقات
+  /// المجمّعة — بدل صف لكل قطعة فعلية، بطاقة واحدة لكل "نوع" (رقم قطعة
+  /// أو موديل معروف، أو وصف متطابق للقطع اللي من غير رقم قطعة) مع عدد
+  /// المتاح والإجمالي.
+  ///
+  /// التجميع بيتم في Dart مش SQL View، عشان يغطي الحالتين مع بعض (رقم
+  /// قطعة موجود / مش موجود) في استعلام واحد بسيط، ومايتقفلش على شكل
+  /// View ممكن يبقى مش متزامن مع القاعدة الحقيقية.
+  /// ============================================================
+
+  /// مفتاح تجميع البطاقة: "pn:<رقم القطعة>" لو موجود، وإلا
+  /// "desc:<الوصف بعد التريم>" — يُستخدم كـ groupKey في البطاقة وفي
+  /// getByGroupKey لجيب القطع الفعلية جواها.
+  String _groupKeyFor(Map<String, dynamic> item) {
+    final pn = item['part_number'] as String?;
+    final hasPartNumber = pn != null && pn.isNotEmpty && pn != 'PENDING';
+    if (hasPartNumber) return 'pn:$pn';
+    final desc = (item['description'] as String?)?.trim();
+    return 'desc:${(desc == null || desc.isEmpty) ? 'غير محدد' : desc}';
   }
+
+  /// كل بطاقات المجموعات (لتبويب المخزون وجزء التوفر في تبويب البحث).
+  /// كل عنصر في الرجعة: group_key, display_name, item_type, brand,
+  /// has_part_number, total_count, available_count.
+  Future<List<Map<String, dynamic>>> getGroupedInventory() async {
+    final itemRows = await _client.from('inventory_items').select();
+    final items = (itemRows as List).cast<Map<String, dynamic>>();
+
+    final partNumbers = items
+        .map((r) => r['part_number'] as String?)
+        .where((p) => p != null && p.isNotEmpty && p != 'PENDING')
+        .cast<String>()
+        .toSet();
+
+    final kbByPartNumber = <String, Map<String, dynamic>>{};
+    if (partNumbers.isNotEmpty) {
+      final kbRows = await _client
+          .from('specs_knowledge_base')
+          .select('Part_Number, Part_Model, Brand')
+          .inFilter('Part_Number', partNumbers.toList());
+      for (final r in kbRows as List) {
+        kbByPartNumber[r['Part_Number'] as String] = r as Map<String, dynamic>;
+      }
+    }
+
+    final groups = <String, Map<String, dynamic>>{};
+    for (final item in items) {
+      final pn = item['part_number'] as String?;
+      final desc = (item['description'] as String?)?.trim();
+      final hasPartNumber = pn != null && pn.isNotEmpty && pn != 'PENDING';
+      final key = _groupKeyFor(item);
+
+      final kb = hasPartNumber ? kbByPartNumber[pn] : null;
+      final displayName = (kb?['Part_Model'] as String?) ??
+          (hasPartNumber
+              ? pn!
+              : ((desc == null || desc.isEmpty) ? 'غير محدد' : desc));
+
+      final g = groups.putIfAbsent(
+          key,
+          () => {
+                'group_key': key,
+                'display_name': displayName,
+                'item_type': item['item_type'],
+                'brand': kb?['Brand'],
+                'has_part_number': hasPartNumber,
+                'total_count': 0,
+                'available_count': 0,
+              });
+      g['total_count'] = (g['total_count'] as int) + 1;
+      if (item['status'] == 'Available') {
+        g['available_count'] = (g['available_count'] as int) + 1;
+      }
+    }
+
+    final result = groups.values.toList();
+    result.sort(
+        (a, b) => (b['total_count'] as int).compareTo(a['total_count'] as int));
+    return result;
+  }
+
+  /// كل القطع الفعلية جوه مجموعة معينة (نفس groupKey من
+  /// getGroupedInventory) — تُستخدم في شاشة "بطاقات القطع الفردية"
+  /// بعد ما المستخدم يدوس على بطاقة المجموعة.
+  Future<List<InventoryItem>> getByGroupKey(String groupKey) async {
+    if (groupKey.startsWith('pn:')) {
+      return getByPartNumber(groupKey.substring(3));
+    }
+    final desc =
+        groupKey.startsWith('desc:') ? groupKey.substring(5) : groupKey;
+    if (desc == 'غير محدد') {
+      final rows = await _client
+          .from('inventory_items')
+          .select()
+          .or('description.is.null,description.eq.')
+          .order('created_at', ascending: false);
+      return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
+    }
+    final rows = await _client
+        .from('inventory_items')
+        .select()
+        .eq('description', desc)
+        .order('created_at', ascending: false);
+    return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
+  }
+
+  /// اسم قديم كان بيعتمد على View (`inventory_items_grouped`) مش
+  /// مضمون وجودها/تحديثها فعلياً — استُبدل بـ getGroupedInventory
+  /// اللي بيحسب التجميع مباشرة من الجدول، وبيغطي حالة القطع من غير
+  /// رقم قطعة كمان (كانت الـ View القديمة بتغطي رقم القطعة بس).
+  @Deprecated('استخدم getGroupedInventory بدل ده')
+  Future<List<Map<String, dynamic>>> getGroupedByPartNumber() =>
+      getGroupedInventory();
 
   Future<List<InventoryItem>> bulkInsert(List<InventoryItem> items) async {
     final rows = await _client
