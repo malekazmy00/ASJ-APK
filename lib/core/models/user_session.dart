@@ -1,4 +1,4 @@
-/// يطابق جدول user_sessions الجديد (راجع migrations/001).
+/// يطابق جدول user_sessions الجديد (راجع migrations/001 و003).
 class UserSession {
   final int? id;
   final String username;
@@ -6,6 +6,7 @@ class UserSession {
   final DateTime? lastActivityAt;
   final DateTime? logoutAt;
   final String? deviceInfo;
+  final String? ipAddress;
 
   const UserSession({
     this.id,
@@ -14,6 +15,7 @@ class UserSession {
     this.lastActivityAt,
     this.logoutAt,
     this.deviceInfo,
+    this.ipAddress,
   });
 
   factory UserSession.fromMap(Map<String, dynamic> map) {
@@ -30,6 +32,7 @@ class UserSession {
           ? DateTime.tryParse(map['logout_at'].toString())
           : null,
       deviceInfo: map['device_info'] as String?,
+      ipAddress: map['ip_address'] as String?,
     );
   }
 
