@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/config/supabase_config.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'core/services/auth_persistence.dart';
+import 'features/auth/presentation/auth_providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +34,18 @@ Future<void> main() async {
     anonKey: SupabaseConfig.anonKey,
   );
 
-  runApp(const ProviderScope(child: AsjApp()));
+  // استعادة الدخول قبل أول رسم للتطبيق، عشان الحساب يبان مسجّل دخول
+  // على طول من غير أي وميض لشاشة الدخول لو كان فعلاً مسجّل قبل كده.
+  final restoredUser = await AuthPersistence.restoreUser();
+
+  runApp(
+    ProviderScope(
+      overrides: [
+        initialUserProvider.overrideWithValue(restoredUser),
+      ],
+      child: const AsjApp(),
+    ),
+  );
 }
 
 class AsjApp extends ConsumerWidget {
@@ -55,6 +68,18 @@ class AsjApp extends ConsumerWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+      builder: (context, child) {
+        // أي لمسة في أي حتة في التطبيق تصفّر عداد خمول الـ 30 دقيقة
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) {
+            if (ref.read(authControllerProvider) != null) {
+              ref.read(authControllerProvider.notifier).registerInteraction();
+            }
+          },
+          child: child,
+        );
+      },
     );
   }
 }
