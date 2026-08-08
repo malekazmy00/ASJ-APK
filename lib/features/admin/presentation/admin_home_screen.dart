@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/app_user.dart';
 import '../../../core/models/notification.dart';
 import '../../../core/repositories/user_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/constants/nav_tabs.dart';
+import '../../auth/presentation/auth_providers.dart';
 
 // ---------------------------------------------------------------------
-class UsersTab extends StatefulWidget {
+class UsersTab extends ConsumerStatefulWidget {
   const UsersTab({super.key});
 
   @override
-  State<UsersTab> createState() => _UsersTabState();
+  ConsumerState<UsersTab> createState() => _UsersTabState();
 }
 
-class _UsersTabState extends State<UsersTab> {
+class _UsersTabState extends ConsumerState<UsersTab> {
   final _userRepo = UserRepository();
   List<AppUser> _users = [];
   bool _loading = true;
@@ -104,6 +107,7 @@ class _UsersTabState extends State<UsersTab> {
         'username': usernameCtrl.text.trim(),
         'password': passwordCtrl.text,
         'role': role,
+        'createdBy': ref.read(authControllerProvider)?.username,
       },
     );
     final data = response.data as Map<String, dynamic>?;
@@ -120,46 +124,88 @@ class _UsersTabState extends State<UsersTab> {
     String role = user.role.name;
     String status = user.status;
     final newPasswordCtrl = TextEditingController();
+    final overrides = Map<String, bool>.from(await _userRepo.getTabOverrides(user.username));
+    // null = افتراضي حسب الدور، true = إظهار دائماً، false = إخفاء دائماً
+    final Map<String, bool?> tabChoices = {
+      for (final tab in allNavTabs) tab.$1: overrides[tab.$1],
+    };
 
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: Text(user.username),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: role,
-                decoration: const InputDecoration(labelText: 'الدور'),
-                items: const [
-                  DropdownMenuItem(value: 'worker', child: Text('عامل')),
-                  DropdownMenuItem(value: 'engineer', child: Text('مهندس')),
-                  DropdownMenuItem(value: 'admin', child: Text('أدمن')),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: role,
+                    decoration: const InputDecoration(labelText: 'الدور'),
+                    items: const [
+                      DropdownMenuItem(value: 'worker', child: Text('عامل')),
+                      DropdownMenuItem(value: 'engineer', child: Text('مهندس')),
+                      DropdownMenuItem(value: 'admin', child: Text('أدمن')),
+                    ],
+                    onChanged: (v) => setDialogState(() => role = v ?? role),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: status,
+                    decoration: const InputDecoration(labelText: 'الحالة'),
+                    items: const [
+                      DropdownMenuItem(value: 'Active', child: Text('مفعّل')),
+                      DropdownMenuItem(value: 'Inactive', child: Text('موقوف')),
+                    ],
+                    onChanged: (v) => setDialogState(() => status = v ?? status),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: newPasswordCtrl,
+                    obscureText: true,
+                    textAlign: TextAlign.right,
+                    decoration: const InputDecoration(
+                      labelText: 'كلمة مرور جديدة (سيبها فاضية لو مش هتغيّرها)',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Theme(
+                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      title: const Text('صلاحيات التبويبات (تخصيص فردي)', textAlign: TextAlign.right),
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      children: allNavTabs.map((tab) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButton<bool?>(
+                                  isExpanded: true,
+                                  value: tabChoices[tab.$1],
+                                  items: const [
+                                    DropdownMenuItem(value: null, child: Text('افتراضي حسب الدور')),
+                                    DropdownMenuItem(value: true, child: Text('إظهار دائماً')),
+                                    DropdownMenuItem(value: false, child: Text('إخفاء دائماً')),
+                                  ],
+                                  onChanged: (v) => setDialogState(() => tabChoices[tab.$1] = v),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(tab.$2, textAlign: TextAlign.right),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 ],
-                onChanged: (v) => setDialogState(() => role = v ?? role),
               ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: status,
-                decoration: const InputDecoration(labelText: 'الحالة'),
-                items: const [
-                  DropdownMenuItem(value: 'Active', child: Text('مفعّل')),
-                  DropdownMenuItem(value: 'Inactive', child: Text('موقوف')),
-                ],
-                onChanged: (v) => setDialogState(() => status = v ?? status),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: newPasswordCtrl,
-                obscureText: true,
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  labelText: 'كلمة مرور جديدة (سيبها فاضية لو مش هتغيّرها)',
-                ),
-              ),
-            ],
+            ),
           ),
           actions: [
             TextButton(
@@ -195,6 +241,19 @@ class _UsersTabState extends State<UsersTab> {
         );
       }
     }
+
+    final adminUsername = ref.read(authControllerProvider)?.username ?? 'unknown';
+    for (final tab in allNavTabs) {
+      final newChoice = tabChoices[tab.$1];
+      final oldChoice = overrides[tab.$1];
+      if (newChoice == oldChoice) continue;
+      if (newChoice == null) {
+        await _userRepo.clearTabOverride(user.username, tab.$1);
+      } else {
+        await _userRepo.setTabOverride(user.username, tab.$1, newChoice, updatedBy: adminUsername);
+      }
+    }
+
     _load();
   }
 
