@@ -1,5 +1,6 @@
 /// تطابق حرفي لـ core/enums.py في النظام الأصلي (Streamlit) — نفس القيم
 /// النصية بالضبط لأنها مخزنة كـ String في القاعدة، مش Enum حقيقي في Postgres.
+library;
 
 enum ItemStatus {
   available('Available', 'متاح'),
