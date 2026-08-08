@@ -7,10 +7,13 @@ class UserSessionRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   /// يُستدعى فور نجاح تسجيل الدخول (راجع AuthController.login).
-  Future<int?> openSession(String username) async {
+  Future<int?> openSession(String username, {String? deviceInfo}) async {
     final rows = await _client
         .from('user_sessions')
-        .insert({'username': username})
+        .insert({
+          'username': username,
+          if (deviceInfo != null) 'device_info': deviceInfo,
+        })
         .select('id');
     final list = rows as List;
     if (list.isEmpty) return null;
