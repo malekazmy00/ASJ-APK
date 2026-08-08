@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/asj_logo.dart';
+import '../../../core/services/auth_persistence.dart';
 import 'auth_providers.dart';
 
 /// شاشة الدخول: منطقة بيضا فوق فيها اللوجو والعنوان (زي ما كانت)،
@@ -20,6 +21,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // اسم المستخدم يفضل متذكَّر بين مرات الدخول، الباسورد بس اللي بيتكتب
+    // كل مرة من جديد.
+    AuthPersistence.getRememberedUsername().then((remembered) {
+      if (remembered != null && mounted) {
+        setState(() => _usernameController.text = remembered);
+      }
+    });
+  }
 
   @override
   void dispose() {
