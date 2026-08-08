@@ -18,10 +18,10 @@ const PROMPT_TEMPLATE = (partNumber: string) => `أنت خبير فني متخص
 المعلومة المتاحة لديك عن القطعة: '${partNumber}'
 (ملحوظة: المعلومة دي ممكن تكون رقم قطعة بس، أو اسم/نص وصفي بس، أو الاتنين مع بعض موضحين بعلامة |)
 
-استخدم أداة البحث المتاحة لك فعلياً للتأكد من رقم القطعة ده ومعرفة بياناته
-الحقيقية بدل الاعتماد على معلوماتك العامة بس. الجهاز المتوافق (Compatible_Model)
-لازم يكون اسم موديل جهاز طبي حقيقي ومحدد (مثلاً "GE BrightSpeed" أو "Siemens
-Somatom Definition") مش تصنيف عام زي "جهاز أشعة مقطعية".
+استخدم أفضل معرفتك العامة للتأكد من رقم القطعة ده. الجهاز المتوافق
+(Compatible_Model) لازم يكون اسم موديل جهاز طبي حقيقي ومحدد (مثلاً "GE
+BrightSpeed" أو "Siemens Somatom Definition") مش تصنيف عام زي "جهاز أشعة
+مقطعية".
 
 لو مرفقة معك صورة، مطلوب منك تحدد العناصر التالية بدقة وبشكل منفصل تماماً عن بعض:
 
@@ -83,14 +83,17 @@ Deno.serve(async (req) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 contents: [{ parts }],
-                tools: [{ google_search: {} }],
                 generationConfig: { temperature: 0.1, topP: 0.95, topK: 40, maxOutputTokens: 1024 },
               }),
             },
           );
 
           if (res.status === 429) {
-            lastError = "الباقة انتهت على هذا المفتاح/النموذج، جرّب مفتاح أو نموذج أقوى";
+            // بنسجل نص الخطأ الفعلي من Gemini بدل رسالة عامة، عشان لو
+            // السبب حاجة تانية غير استهلاك حصة حقيقي (مفتاح غير مفعّل،
+            // نموذج يحتاج فوترة...) نشوفه بالظبط بدل التخمين.
+            const bodyText = await res.text();
+            lastError = `فشل على ${model} (429): ${bodyText}`;
             continue;
           }
           if (!res.ok) {
