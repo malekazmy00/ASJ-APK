@@ -186,7 +186,8 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
         itemId: item.itemId,
         actionType: ActionType.out,
         username: username,
-        details: 'تم الصرف إلى: ${result.recipient} (${result.exitType.arabicLabel})',
+        details: 'تم الصرف إلى: ${result.recipient} (${result.exitType.arabicLabel})'
+            '${result.note != null ? ' — ملاحظة: ${result.note}' : ''}',
         exitType: result.exitType.dbValue,
       );
 
@@ -466,7 +467,8 @@ class _EmptyNote extends StatelessWidget {
 class _DispatchResult {
   final String recipient;
   final ExitType exitType;
-  const _DispatchResult(this.recipient, this.exitType);
+  final String? note;
+  const _DispatchResult(this.recipient, this.exitType, this.note);
 }
 
 class _RecipientDialog extends StatefulWidget {
@@ -476,6 +478,7 @@ class _RecipientDialog extends StatefulWidget {
 
 class _RecipientDialogState extends State<_RecipientDialog> {
   final _controller = TextEditingController();
+  final _noteController = TextEditingController();
   ExitType _exitType = ExitType.sale;
 
   @override
@@ -500,6 +503,13 @@ class _RecipientDialogState extends State<_RecipientDialog> {
                 .toList(),
             onChanged: (v) => setState(() => _exitType = v ?? _exitType),
           ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _noteController,
+            textAlign: TextAlign.right,
+            maxLines: 2,
+            decoration: const InputDecoration(labelText: 'ملاحظة (اختياري)'),
+          ),
         ],
       ),
       actions: [
@@ -508,8 +518,13 @@ class _RecipientDialogState extends State<_RecipientDialog> {
           child: const Text('إلغاء'),
         ),
         ElevatedButton(
-          onPressed: () => Navigator.of(context)
-              .pop(_DispatchResult(_controller.text, _exitType)),
+          onPressed: () => Navigator.of(context).pop(
+            _DispatchResult(
+              _controller.text,
+              _exitType,
+              _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+            ),
+          ),
           child: const Text('تأكيد الصرف'),
         ),
       ],
@@ -929,15 +944,28 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
 
   Future<void> _returnToInventory() async {
     final receivedByController = TextEditingController();
+    final noteController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('استرجاع القطعة'),
-        content: TextField(
-          controller: receivedByController,
-          textAlign: TextAlign.right,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'استلمها (اسمك أو اسم المستلم)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: receivedByController,
+              textAlign: TextAlign.right,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'استلمها (اسمك أو اسم المستلم)'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'سبب الاسترجاع (اختياري)'),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -955,6 +983,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     final receivedBy = receivedByController.text.trim().isEmpty
         ? widget.username
         : receivedByController.text.trim();
+    final note = noteController.text.trim();
 
     setState(() => _saving = true);
     try {
@@ -963,7 +992,8 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
         itemId: widget.item.itemId,
         actionType: ActionType.return_,
         username: widget.username,
-        details: 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy',
+        details: 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy'
+            '${note.isNotEmpty ? ' — ملاحظة: $note' : ''}',
       );
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -1123,4 +1153,49 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               decoration: const InputDecoration(labelText: 'البراند'),
             ),
             const SizedBox(height: 10),
-            T
+            TextField(
+              controller: _categoryField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الفئة/الوصف'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _compatibleModelField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'الجهاز المتوافق'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _additionalCompatField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'أجهزة متوافقة إضافية'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _marketValueField,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'السعر التقريبي'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _insightsField,
+              textAlign: TextAlign.right,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'ملاحظات فنية'),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('حفظ كل التعديلات'),
+            ),
+            const SizedBox(height: 12),
+          ],
+        );
+      },
+    );
+  }
+}
