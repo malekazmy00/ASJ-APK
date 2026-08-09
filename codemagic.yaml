@@ -23,14 +23,38 @@ workflows:
       - name: إضافة صلاحيات الكاميرا والإنترنت
         script: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
+          echo "محتوى الـ manifest قبل التعديل:"
+          cat "$MANIFEST"
+
           if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
-            awk '{print} /<manifest / && !y {print "    <uses-permission android:name=\"android.permission.INTERNET\" />"; y=1}' "$MANIFEST" > /tmp/manifest2.xml
+            awk '{print} /<manifest/ && !y {print "    <uses-permission android:name=\"android.permission.INTERNET\" />"; y=1}' "$MANIFEST" > /tmp/manifest2.xml
             mv /tmp/manifest2.xml "$MANIFEST"
           fi
-          if ! grep -q 'CAMERA' "$MANIFEST"; then
-            awk '{print} /<manifest / && !x {print "    <uses-permission android:name=\"android.permission.CAMERA\" />"; x=1}' "$MANIFEST" > /tmp/manifest.xml
-            mv /tmp/manifest.xml "$MANIFEST"
+          if ! grep -q 'android.permission.CAMERA' "$MANIFEST"; then
+            awk '{print} /<manifest/ && !x {print "    <uses-permission android:name=\"android.permission.CAMERA\" />"; x=1}' "$MANIFEST" > /tmp/manifest3.xml
+            mv /tmp/manifest3.xml "$MANIFEST"
           fi
+          if ! grep -q 'android.hardware.camera' "$MANIFEST"; then
+            awk '{print} /<manifest/ && !z {print "    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />"; z=1}' "$MANIFEST" > /tmp/manifest4.xml
+            mv /tmp/manifest4.xml "$MANIFEST"
+          fi
+
+          echo "محتوى الـ manifest بعد التعديل:"
+          cat "$MANIFEST"
+
+          # فحص حاسم: لو الصلاحية مش موجودة فعلياً بعد كل المحاولات، وقف
+          # البناء دلوقتي بدل ما نكمل ونطلع APK ناقص صلاحية الكاميرا
+          # بصمت (ده كان السبب الحقيقي في باج "تعذر تشغيل الكاميرا" —
+          # الإضافة كانت بتفشل بصمت من غير أي تحقق).
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            echo "خطأ فادح: صلاحية الإنترنت مش موجودة في الـ manifest النهائي."
+            exit 1
+          fi
+          if ! grep -q 'android.permission.CAMERA' "$MANIFEST"; then
+            echo "خطأ فادح: صلاحية الكاميرا مش موجودة في الـ manifest النهائي."
+            exit 1
+          fi
+          echo "تم التأكد: صلاحيات الكاميرا والإنترنت موجودة فعلياً في الـ manifest."
       - name: تثبيت الحزم
         script: flutter pub get
       - name: توليد أيقونة التطبيق
