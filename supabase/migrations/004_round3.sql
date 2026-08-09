@@ -18,6 +18,5 @@ INSERT INTO notification_settings (notif_type, enabled) VALUES
     ('permissions_changed', true),
     ('admin_password_reset', true),
     ('self_password_change', false),
-    ('approval_created', true),
     ('approval_resolved', true)
 ON CONFLICT (notif_type) DO NOTHING;
