@@ -1,0 +1,467 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/models/enums.dart';
+import '../../../core/models/inventory_item.dart';
+import '../../../core/models/knowledge_base_entry.dart';
+import '../../../core/repositories/inventory_repository.dart';
+import '../../../core/repositories/knowledge_base_repository.dart';
+import '../../../core/repositories/log_repository.dart';
+import '../../../core/repositories/approval_repository.dart';
+import '../../../core/repositories/notification_repository.dart';
+import '../../auth/presentation/auth_providers.dart';
+
+/// صفحة تفاصيل قطعة واحدة كاملة (الجولة الثالثة، نقطة ٢) — بتفتح من
+/// بطاقة القطعة في InventoryGroupItemsScreen، وفيها بيانات القطعة
+/// المحفوظة + خيارات الصرف/الاسترجاع/التتبع/التعديل الأساسي كلها مع
+/// بعض في نفس الصفحة.
+///
+/// تعديل رقم القطعة/السريال بيعدي على نظام الموافقة الموجود زي أي
+/// تعديل تاني في التطبيق. إعادة تحليل الصورة بالذكاء الاصطناعي لسه
+/// موجودة بس في شاشة التعديل الكاملة (لوحة التعديل) لحد ما نوحّدهم في
+/// دفعة لاحقة.
+class InventoryItemDetailScreen extends ConsumerStatefulWidget {
+  const InventoryItemDetailScreen({super.key, required this.item});
+  final InventoryItem item;
+
+  @override
+  ConsumerState<InventoryItemDetailScreen> createState() =>
+      _InventoryItemDetailScreenState();
+}
+
+class _InventoryItemDetailScreenState
+    extends ConsumerState<InventoryItemDetailScreen> {
+  final _inventoryRepo = InventoryRepository();
+  final _kbRepo = KnowledgeBaseRepository();
+  final _logRepo = LogRepository();
+  final _approvalRepo = ApprovalRepository();
+  final _notifRepo = NotificationRepository();
+
+  late InventoryItem _item;
+  KnowledgeBaseEntry? _kb;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _item = widget.item;
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final refreshed = await _inventoryRepo.getById(_item.itemId!);
+    KnowledgeBaseEntry? kb;
+    if (_item.partNumber != 'PENDING' && _item.partNumber.isNotEmpty) {
+      kb = await _kbRepo.getByPartNumber(_item.partNumber);
+    }
+    if (mounted) {
+      setState(() {
+        _item = refreshed ?? _item;
+        _kb = kb;
+        _loading = false;
+      });
+    }
+  }
+
+  String get _username => ref.read(authControllerProvider)?.username ?? 'unknown';
+
+  Future<void> _dispatch() async {
+    final result = await showDialog<_DispatchResult>(
+      context: context,
+      builder: (_) => const _DispatchDialog(),
+    );
+    if (result == null) return;
+
+    await _logRepo.logAction(
+      itemId: _item.itemId,
+      actionType: ActionType.out,
+      username: _username,
+      details: [
+        'صرف إلى: ${result.recipient}',
+        if (result.note != null) 'ملاحظة: ${result.note}',
+      ].join(' — '),
+      exitType: result.exitType.dbValue,
+    );
+    await _inventoryRepo.updateStatus(_item.itemId!, 'Out');
+    await _notifRepo.create(
+      notifType: NotificationEventType.dispatch.dbValue,
+      message: 'صرف القطعة #${_item.itemId} (${_item.partNumber}) إلى ${result.recipient}',
+      relatedId: _item.itemId,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تسجيل الصرف')));
+    }
+    _load();
+  }
+
+  Future<void> _returnToStock() async {
+    final noteController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('استرجاع للمخزون'),
+        content: TextField(
+          controller: noteController,
+          textAlign: TextAlign.right,
+          maxLines: 2,
+          decoration: const InputDecoration(labelText: 'سبب الاسترجاع (اختياري)'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('تأكيد الاسترجاع'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final note = noteController.text.trim();
+    await _logRepo.logAction(
+      itemId: _item.itemId,
+      actionType: ActionType.return_,
+      username: _username,
+      details: note.isEmpty ? 'استرجاع للمخزون' : 'استرجاع للمخزون — $note',
+    );
+    await _inventoryRepo.updateStatus(_item.itemId!, 'Available');
+    await _notifRepo.create(
+      notifType: NotificationEventType.returnToStock.dbValue,
+      message: 'استرجاع القطعة #${_item.itemId} (${_item.partNumber}) للمخزون',
+      relatedId: _item.itemId,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم الاسترجاع')));
+    }
+    _load();
+  }
+
+  Future<void> _editBasicFields() async {
+    final locationController = TextEditingController(text: _item.location);
+    final notesController = TextEditingController(text: _item.notes);
+    String condition = _item.condition ?? ItemCondition.used.dbValue;
+    String ownership = _item.ownershipStatus;
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: StatefulBuilder(
+          builder: (context, setSheetState) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('تعديل بيانات القطعة #${_item.itemId}',
+                    textAlign: TextAlign.right,
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: locationController,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(labelText: 'المكان'),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: condition,
+                  decoration: const InputDecoration(labelText: 'الحالة'),
+                  items: ItemCondition.values
+                      .map((e) =>
+                          DropdownMenuItem(value: e.dbValue, child: Text(e.dbValue)))
+                      .toList(),
+                  onChanged: (v) => setSheetState(() => condition = v ?? condition),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: ownership,
+                  decoration: const InputDecoration(labelText: 'حالة الملكية'),
+                  items: OwnershipStatus.values
+                      .map((e) => DropdownMenuItem(
+                          value: e.dbValue, child: Text(e.arabicLabel)))
+                      .toList(),
+                  onChanged: (v) => setSheetState(() => ownership = v ?? ownership),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notesController,
+                  textAlign: TextAlign.right,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'ملاحظات'),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('حفظ'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (saved != true) return;
+    await _inventoryRepo.updateFields(_item.itemId!, {
+      'location': locationController.text.trim(),
+      'condition': condition,
+      'ownership_status': ownership,
+      'notes': notesController.text.trim(),
+    });
+    await _logRepo.logAction(
+      itemId: _item.itemId,
+      actionType: ActionType.update,
+      username: _username,
+      details: 'تعديل بيانات أساسية من صفحة تفاصيل القطعة',
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم الحفظ')));
+    }
+    _load();
+  }
+
+  /// تعديل رقم القطعة/السريال — بيعدي على نظام الموافقة زي باقي
+  /// التطبيق، مش بيتطبق فوراً.
+  Future<void> _requestSensitiveEdit({
+    required bool isPartNumber,
+  }) async {
+    final controller = TextEditingController(
+      text: isPartNumber ? _item.partNumber : (_item.serialNumber ?? ''),
+    );
+    final newValue = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isPartNumber ? 'طلب تعديل رقم القطعة' : 'طلب تعديل الرقم التسلسلي'),
+        content: TextField(
+          controller: controller,
+          textAlign: TextAlign.right,
+          decoration: const InputDecoration(labelText: 'القيمة الجديدة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('إرسال للموافقة'),
+          ),
+        ],
+      ),
+    );
+    if (newValue == null || newValue.isEmpty) return;
+
+    await _approvalRepo.create(
+      type: isPartNumber ? ApprovalType.partNumberEdit : ApprovalType.serialEdit,
+      payload: {
+        'item_id': _item.itemId,
+        'field': isPartNumber ? 'part_number' : 'serial_number',
+        'old_value': isPartNumber ? _item.partNumber : _item.serialNumber,
+        'new_value': newValue,
+      },
+      requestedBy: _username,
+    );
+    await _notifRepo.create(
+      notifType: (isPartNumber
+              ? NotificationEventType.partNumberEdit
+              : NotificationEventType.serialEdit)
+          .dbValue,
+      message:
+          '${_username} طلب تعديل ${isPartNumber ? 'رقم القطعة' : 'الرقم التسلسلي'} للقطعة #${_item.itemId}',
+      relatedId: _item.itemId,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم إرسال الطلب لموافقة الأدمن')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final available = _item.status == 'Available';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _item.partNumber == 'PENDING' ? 'تفاصيل القطعة' : _item.partNumber,
+        ),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _row('رقم القطعة الداخلي (اكتبه على القطعة)', '#${_item.itemId}'),
+                    _row('النوع', _item.itemType),
+                    _row('رقم القطعة',
+                        _item.partNumber == 'PENDING' ? 'بدون رقم' : _item.partNumber,
+                        onEdit: () => _requestSensitiveEdit(isPartNumber: true)),
+                    _row('الرقم التسلسلي', _item.serialNumber ?? '—',
+                        onEdit: () => _requestSensitiveEdit(isPartNumber: false)),
+                    if (_kb?.partModel != null) _row('الموديل (اسم كودي)', _kb!.partModel!),
+                    if (_kb?.brand != null) _row('البراند', _kb!.brand!),
+                    if (_kb?.compatibleModel != null)
+                      _row('الجهاز المتوافق', _kb!.compatibleModel!),
+                    if (_item.description != null && _item.description!.isNotEmpty)
+                      _row('الوصف', _item.description!),
+                    _row('المكان', _item.location ?? '—'),
+                    _row('الحالة (فنية)', _item.condition ?? '—'),
+                    _row('حالة المخزون', _item.status),
+                    _row('حالة الملكية', _item.ownershipStatus),
+                    if (_item.notes != null && _item.notes!.isNotEmpty)
+                      _row('ملاحظات', _item.notes!),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (available)
+                  ElevatedButton.icon(
+                    onPressed: _dispatch,
+                    icon: const Icon(Icons.outbox),
+                    label: const Text('صرف'),
+                  )
+                else
+                  ElevatedButton.icon(
+                    onPressed: _returnToStock,
+                    icon: const Icon(Icons.undo),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+                    label: const Text('استرجاع للمخزون'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _editBasicFields,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('تعديل البيانات'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String label, String value, {VoidCallback? onEdit}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          if (onEdit != null)
+            IconButton(
+              icon: const Icon(Icons.edit, size: 18, color: AppColors.textMuted),
+              onPressed: onEdit,
+              visualDensity: VisualDensity.compact,
+            ),
+          Expanded(
+            child: Text(value, textAlign: TextAlign.right),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              textAlign: TextAlign.right,
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DispatchResult {
+  final String recipient;
+  final ExitType exitType;
+  final String? note;
+  const _DispatchResult(this.recipient, this.exitType, this.note);
+}
+
+class _DispatchDialog extends StatefulWidget {
+  const _DispatchDialog();
+
+  @override
+  State<_DispatchDialog> createState() => _DispatchDialogState();
+}
+
+class _DispatchDialogState extends State<_DispatchDialog> {
+  final _controller = TextEditingController();
+  final _noteController = TextEditingController();
+  ExitType _exitType = ExitType.sale;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('صرف القطعة'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _controller,
+            textAlign: TextAlign.right,
+            decoration: const InputDecoration(labelText: 'اسم المستلم/الجهة'),
+            autofocus: true,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<ExitType>(
+            initialValue: _exitType,
+            decoration: const InputDecoration(labelText: 'سبب الصرف'),
+            items: ExitType.values
+                .map((e) => DropdownMenuItem(value: e, child: Text(e.arabicLabel)))
+                .toList(),
+            onChanged: (v) => setState(() => _exitType = v ?? _exitType),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _noteController,
+            textAlign: TextAlign.right,
+            maxLines: 2,
+            decoration: const InputDecoration(labelText: 'ملاحظة (اختياري)'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(context).pop(
+            _DispatchResult(
+              _controller.text,
+              _exitType,
+              _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+            ),
+          ),
+          child: const Text('تأكيد الصرف'),
+        ),
+      ],
+    );
+  }
+}
