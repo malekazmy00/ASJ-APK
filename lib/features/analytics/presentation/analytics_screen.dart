@@ -4,7 +4,12 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/analytics_repository.dart';
 
-/// شاشة تحليل بيانات المخزون. مبنية بالكامل على بيانات حقيقية.
+/// شاشة تحليل بيانات المخزون.
+///
+/// الجولة الثالثة (نقطة ٨+٩): بدل ٥ مؤشرات ثابتة بس، الشاشة دلوقتي
+/// فيها جزئين — "الأساسيات" (مؤشرات جاهزة موسّعة) و"بناء تحليل حر"
+/// (زي PivotTable مصغّر: اختار عمود + نوع رسم بحرية). وإصلاح باج
+/// دايالوج اختيار المؤشرات (كان بيطفح من غير سكرول على الشاشات الصغيرة).
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
 
@@ -23,15 +28,31 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Map<String, int> _ownershipBreakdown = {};
   Map<String, int> _exitReasonBreakdown = {};
   List<MapEntry<DateTime, int>> _trend = [];
+  List<MapEntry<String, int>> _topParts = [];
+  Map<String, int> _engineerLeaderboard = {};
 
+  // Part A — الأساسيات (موسّعة عن الـ٥ الأصليين بإضافة أكتر القطع
+  // صرفاً وأداء المهندسين)
   static const _chartLabels = {
     'stats': 'أرقام سريعة (إجمالي/أسبوع/شهر)',
     'status': 'توزيع حالة المخزون',
     'ownership': 'الصيانة/الأمانة الآن',
     'exit_reason': 'سبب الصرف',
     'trend': 'اتجاه الصرف',
+    'top_parts': 'أكتر القطع صرفاً (٣٠ يوم)',
+    'engineer_leaderboard': 'أداء صرف المهندسين (٣٠ يوم)',
   };
   Set<String> _visibleCharts = _chartLabels.keys.toSet();
+
+  // Part B — بناء تحليل حر
+  String _pivotTable = 'inventory_items';
+  String _pivotColumn = 'status';
+  List<MapEntry<String, int>>? _pivotResult;
+  bool _pivotLoading = false;
+
+  Map<String, String> get _pivotColumnOptions => _pivotTable == 'inventory_items'
+      ? AnalyticsRepository.pivotColumns
+      : AnalyticsRepository.pivotLogColumns;
 
   Future<void> _pickVisibleCharts() async {
     final selection = Set<String>.from(_visibleCharts);
@@ -42,21 +63,31 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           title: const Text('اختار المؤشرات اللي عاوز تشوفها'),
           content: SizedBox(
             width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: _chartLabels.entries.map((entry) {
-                return CheckboxListTile(
-                  value: selection.contains(entry.key),
-                  title: Text(entry.value, textAlign: TextAlign.right),
-                  onChanged: (v) => setDialogState(() {
-                    if (v == true) {
-                      selection.add(entry.key);
-                    } else {
-                      selection.remove(entry.key);
-                    }
-                  }),
-                );
-              }).toList(),
+            // إصلاح الجولة الثالثة (نقطة ٨): من غير SingleChildScrollView
+            // هنا، القايمة كانت بتطفح على الشاشات الصغيرة من غير سكرول،
+            // فالعناصر اللي تحت بتتقفل تحت أزرار الـ actions.
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.55,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _chartLabels.entries.map((entry) {
+                    return CheckboxListTile(
+                      value: selection.contains(entry.key),
+                      title: Text(entry.value, textAlign: TextAlign.right),
+                      onChanged: (v) => setDialogState(() {
+                        if (v == true) {
+                          selection.add(entry.key);
+                        } else {
+                          selection.remove(entry.key);
+                        }
+                      }),
+                    );
+                  }).toList(),
+                ),
+              ),
             ),
           ),
           actions: [
@@ -92,6 +123,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _repo.getOwnershipBreakdown(),
       _repo.getExitReasonBreakdown(),
       _repo.getDispatchTrend(days: 30),
+      _repo.getTopDispatchedParts(days: 30, topN: 5),
+      _repo.getEngineerDispatchLeaderboard(days: 30),
     ]);
     if (!mounted) return;
     setState(() {
@@ -102,8 +135,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _ownershipBreakdown = results[4] as Map<String, int>;
       _exitReasonBreakdown = results[5] as Map<String, int>;
       _trend = results[6] as List<MapEntry<DateTime, int>>;
+      _topParts = results[7] as List<MapEntry<String, int>>;
+      _engineerLeaderboard = results[8] as Map<String, int>;
       _loading = false;
     });
+  }
+
+  Future<void> _buildPivot() async {
+    setState(() => _pivotLoading = true);
+    try {
+      final result = await _repo.buildPivot(table: _pivotTable, groupByColumn: _pivotColumn);
+      if (mounted) setState(() => _pivotResult = result);
+    } finally {
+      if (mounted) setState(() => _pivotLoading = false);
+    }
   }
 
   @override
@@ -122,19 +167,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final inCustodyCount = _ownershipBreakdown.entries
         .where((e) => e.key != 'Owned')
         .fold<int>(0, (sum, e) => sum + e.value);
+    final leaderboardData =
+        _engineerLeaderboard.entries.map((e) => _Slice(e.key, e.value)).toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
-              onPressed: _pickVisibleCharts,
-              icon: const Icon(Icons.tune, size: 16),
-              label: const Text('اختار المؤشرات'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text('الأساسيات',
+                    textAlign: TextAlign.right,
+                    style: Theme.of(context).textTheme.titleMedium),
+              ),
+              OutlinedButton.icon(
+                onPressed: _pickVisibleCharts,
+                icon: const Icon(Icons.tune, size: 16),
+                label: const Text('اختار المؤشرات'),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           if (_visibleCharts.contains('stats')) ...[
@@ -213,7 +267,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('trend'))
+          if (_visibleCharts.contains('trend')) ...[
             _ChartCard(
               title: 'اتجاه الصرف — آخر 30 يوم',
               child: SfCartesianChart(
@@ -234,6 +288,56 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_visibleCharts.contains('top_parts')) ...[
+            _ChartCard(
+              title: 'أكتر القطع صرفاً — آخر 30 يوم',
+              child: _topParts.isEmpty
+                  ? const Center(
+                      child: Text('لا توجد بيانات صرف كافية بعد',
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+                    )
+                  : SfCartesianChart(
+                      primaryXAxis: const CategoryAxis(),
+                      primaryYAxis: const NumericAxis(minimum: 0),
+                      series: <CartesianSeries>[
+                        BarSeries<MapEntry<String, int>, String>(
+                          dataSource: _topParts,
+                          xValueMapper: (e, _) => e.key,
+                          yValueMapper: (e, _) => e.value,
+                          color: AppColors.primary,
+                          dataLabelSettings: const DataLabelSettings(isVisible: true),
+                        ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_visibleCharts.contains('engineer_leaderboard'))
+            _ChartCard(
+              title: 'أداء صرف المهندسين — آخر 30 يوم',
+              child: leaderboardData.isEmpty
+                  ? const Center(
+                      child: Text('لا توجد بيانات صرف كافية بعد',
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+                    )
+                  : SfCartesianChart(
+                      primaryXAxis: const CategoryAxis(),
+                      primaryYAxis: const NumericAxis(minimum: 0),
+                      series: <CartesianSeries>[
+                        BarSeries<_Slice, String>(
+                          dataSource: leaderboardData,
+                          xValueMapper: (e, _) => e.label,
+                          yValueMapper: (e, _) => e.value,
+                          color: AppColors.accent,
+                          dataLabelSettings: const DataLabelSettings(isVisible: true),
+                        ),
+                      ],
+                    ),
+            ),
 
           if (_visibleCharts.isEmpty)
             const Padding(
@@ -243,6 +347,82 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     style: TextStyle(color: AppColors.textMuted)),
               ),
             ),
+
+          const SizedBox(height: 28),
+          const Divider(),
+          const SizedBox(height: 12),
+          Text('بناء تحليل حر', textAlign: TextAlign.right, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          const Text(
+            'اختار أي عمود من بيانات المخزون أو حركات الصرف وشوف عدد كل قيمة — زي جدول محوري مصغّر.',
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _pivotTable,
+                  decoration: const InputDecoration(labelText: 'مصدر البيانات'),
+                  items: const [
+                    DropdownMenuItem(value: 'inventory_items', child: Text('المخزون')),
+                    DropdownMenuItem(value: 'transactions_log', child: Text('حركات الصرف/السجل')),
+                  ],
+                  onChanged: (v) => setState(() {
+                    _pivotTable = v ?? _pivotTable;
+                    _pivotColumn = _pivotColumnOptions.keys.first;
+                    _pivotResult = null;
+                  }),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _pivotColumn,
+                  decoration: const InputDecoration(labelText: 'العمود'),
+                  items: _pivotColumnOptions.entries
+                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                      .toList(),
+                  onChanged: (v) => setState(() {
+                    _pivotColumn = v ?? _pivotColumn;
+                    _pivotResult = null;
+                  }),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: _pivotLoading ? null : _buildPivot,
+            icon: _pivotLoading
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.bar_chart),
+            label: const Text('بناء التحليل'),
+          ),
+          if (_pivotResult != null) ...[
+            const SizedBox(height: 16),
+            _ChartCard(
+              title: 'النتيجة',
+              child: _pivotResult!.isEmpty
+                  ? const Center(
+                      child: Text('لا توجد بيانات', style: TextStyle(color: AppColors.textMuted)),
+                    )
+                  : SfCartesianChart(
+                      primaryXAxis: const CategoryAxis(),
+                      primaryYAxis: const NumericAxis(minimum: 0),
+                      series: <CartesianSeries>[
+                        BarSeries<MapEntry<String, int>, String>(
+                          dataSource: _pivotResult!.take(15).toList(),
+                          xValueMapper: (e, _) => e.key,
+                          yValueMapper: (e, _) => e.value,
+                          color: AppColors.primary,
+                          dataLabelSettings: const DataLabelSettings(isVisible: true),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
         ],
       ),
     );
