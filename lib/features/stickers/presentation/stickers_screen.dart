@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
@@ -8,7 +11,13 @@ import '../../../core/widgets/barcode_scanner_page.dart';
 /// معاينة استيكر القطعة (رقم القطعة + Serial لو موجود + كود QR).
 /// القائمة بتظهر مباشرة من غير ما تحتاج تبحث الأول (تصفح حر)، ولو
 /// كتبت رقم الـ ID بتاع القطعة بالظبط بتقفز لاستيكرها على طول.
-/// الطباعة الفعلية عبر طابعة متصلة لسه مؤجلة.
+///
+/// الجولة الثالثة (نقطة ١٤ — الطباعة): بدل ما نربط بطابعة معينة
+/// (محتاج نعرف الموديل بالظبط)، بنستخدم نافذة الطباعة القياسية في
+/// أندرويد نفسها (نفس اللي أي تطبيق بيستخدمها) — بتتعرف تلقائياً على
+/// أي طابعة متصلة بالموبايل (بلوتوث/شبكة) طالما مثبّت لها تطبيق
+/// تعريف (print service)، ومن جواها كمان تقدر "احفظ كـ PDF" لو مفيش
+/// طابعة متصلة دلوقتي.
 class StickersScreen extends StatefulWidget {
   const StickersScreen({super.key});
 
@@ -160,13 +169,81 @@ class _StickersScreenState extends State<StickersScreen> {
   }
 }
 
-class _StickerPreview extends StatelessWidget {
+class _StickerPreview extends StatefulWidget {
   const _StickerPreview({required this.item});
   final InventoryItem item;
 
   @override
+  State<_StickerPreview> createState() => _StickerPreviewState();
+}
+
+class _StickerPreviewState extends State<_StickerPreview> {
+  bool _printing = false;
+
+  String get _qrData => 'ASJ|${widget.item.itemId}|${widget.item.partNumber}';
+
+  /// بيبني استيكر بحجم صغير (٦×٤ سم — حجم شائع لاستيكرات القطع)
+  /// ويفتح نافذة الطباعة القياسية بتاعة أندرويد. لو الطابعة الفعلية
+  /// محتاجة مقاس مختلف، نافذة الطباعة نفسها بتدّي خيار تكبير/تصغير
+  /// أو اختيار حجم ورق مختلف حسب الطابعة المتصلة.
+  Future<void> _print() async {
+    setState(() => _printing = true);
+    try {
+      final item = widget.item;
+      final doc = pw.Document();
+      final labelFormat = PdfPageFormat(
+        6 * PdfPageFormat.cm,
+        4 * PdfPageFormat.cm,
+        marginAll: 4,
+      );
+
+      doc.addPage(
+        pw.Page(
+          pageFormat: labelFormat,
+          build: (context) => pw.Center(
+            child: pw.Column(
+              mainAxisAlignment: pw.MainAxisAlignment.center,
+              children: [
+                pw.Text(
+                  item.partNumber == 'PENDING' ? item.itemType : item.partNumber,
+                  style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+                  textAlign: pw.TextAlign.center,
+                ),
+                pw.SizedBox(height: 3),
+                pw.Text('#${item.itemId}', style: const pw.TextStyle(fontSize: 9)),
+                if (item.serialNumber != null && item.serialNumber!.isNotEmpty)
+                  pw.Text('S/N: ${item.serialNumber}', style: const pw.TextStyle(fontSize: 8)),
+                pw.SizedBox(height: 4),
+                pw.BarcodeWidget(
+                  barcode: pw.Barcode.qrCode(),
+                  data: _qrData,
+                  width: 90,
+                  height: 90,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (_) async => doc.save(),
+        name: 'استيكر_${item.itemId}',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذرت الطباعة: $e'), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final qrData = 'ASJ|${item.itemId}|${item.partNumber}';
+    final item = widget.item;
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(18),
@@ -177,7 +254,7 @@ class _StickerPreview extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Text(item.partNumber,
+          Text(item.partNumber == 'PENDING' ? item.itemType : item.partNumber,
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.primary)),
           const SizedBox(height: 4),
           Text('رقم القطعة الداخلي: #${item.itemId}',
@@ -186,10 +263,20 @@ class _StickerPreview extends StatelessWidget {
             Text('Serial: ${item.serialNumber}',
                 style: const TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
           const SizedBox(height: 14),
-          QrImageView(data: qrData, size: 140, backgroundColor: Colors.white),
-          const SizedBox(height: 14),
+          QrImageView(data: _qrData, size: 140, backgroundColor: Colors.white),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _printing ? null : _print,
+            icon: _printing
+                ? const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.print_outlined),
+            label: Text(_printing ? 'جارٍ التحضير...' : 'طباعة الاستيكر'),
+          ),
+          const SizedBox(height: 6),
           const Text(
-            'ميزة الطباعة المباشرة عبر طابعة متصلة قريباً — دلوقتي ممكن تاخد سكرين شوت وتطبعها.',
+            'هتفتح نافذة الطباعة القياسية بتاعة الموبايل — اختار الطابعة المتصلة، أو احفظ الاستيكر كـ PDF.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 10.5, color: AppColors.textMuted),
           ),
