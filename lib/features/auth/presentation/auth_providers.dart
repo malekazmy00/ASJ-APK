@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/models/app_user.dart';
+import '../../../core/models/enums.dart';
+import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/user_session_repository.dart';
 import '../../../core/services/auth_persistence.dart';
 import '../../../core/services/device_info_helper.dart';
@@ -22,13 +24,16 @@ class AuthController extends StateNotifier<AppUser?> {
       : super(initialUser) {
     if (initialUser != null) {
       // استعادة دخول سابق بعد إغلاق فعلي للتطبيق - نفتح سيشن جديد
-      // بأفضل مجهود ممكن، من غير ما نطلب كلمة مرور تاني.
+      // بأفضل مجهود ممكن، من غير ما نطلب كلمة مرور تاني. مفيش إشعار
+      // "تسجيل دخول" هنا عمداً — ده مش دخول صريح من المستخدم، وإطلاق
+      // إشعار عليه هيغرق الأدمن بإشعارات كل ما حد يفتح التطبيق تاني.
       _openSessionAndTrack(initialUser.username);
     }
   }
 
   final AuthService _authService;
   final UserSessionRepository _sessionRepo;
+  final _notifRepo = NotificationRepository();
   bool isLoading = false;
   String? errorMessage;
 
@@ -39,6 +44,10 @@ class AuthController extends StateNotifier<AppUser?> {
       SessionManager.instance.start(sessionId, onInactivityLogout: () {
         state = null;
         AuthPersistence.clearUser();
+        _notifRepo.create(
+          notifType: NotificationEventType.sessionEnd.dbValue,
+          message: '$username — انتهت الجلسة تلقائياً بعد خمول',
+        );
       });
     } catch (_) {
       // فشل فتح السيشن مش لازم يمنع الاستخدام — تجاهل بصمت
@@ -57,6 +66,10 @@ class AuthController extends StateNotifier<AppUser?> {
       if (user != null) {
         await AuthPersistence.saveUser(user);
         await _openSessionAndTrack(user.username);
+        await _notifRepo.create(
+          notifType: NotificationEventType.login.dbValue,
+          message: '$username سجّل دخول',
+        );
       }
       return user != null;
     } catch (e) {
@@ -71,10 +84,17 @@ class AuthController extends StateNotifier<AppUser?> {
 
   /// الطريقة الوحيدة الحقيقية لإنهاء الدخول — زرار الخروج الصريح بس.
   Future<void> logout() async {
+    final username = state?.username;
     await SessionManager.instance.stop();
     await AuthPersistence.clearUser();
     await _authService.signOut();
     state = null;
+    if (username != null) {
+      await _notifRepo.create(
+        notifType: NotificationEventType.sessionEnd.dbValue,
+        message: '$username سجّل خروج',
+      );
+    }
   }
 
   /// أي تفاعل حقيقي من المستخدم (بحث، حفظ، تنقّل...) بيصفّر عداد الخمول.
