@@ -2,22 +2,29 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/models/enums.dart';
 import '../../../core/repositories/export_repository.dart';
+import '../../../core/repositories/log_repository.dart';
+import '../../../core/repositories/notification_repository.dart';
+import '../../auth/presentation/auth_providers.dart';
 
 /// تصدير بيانات النظام كملفات CSV. متاحة لأي مستخدم عنده صلاحية
 /// can_export (زي المخزون/تحليل البيانات بالظبط)، مش حصراً على دور.
-class ExportScreen extends StatefulWidget {
+class ExportScreen extends ConsumerStatefulWidget {
   const ExportScreen({super.key});
 
   @override
-  State<ExportScreen> createState() => _ExportScreenState();
+  ConsumerState<ExportScreen> createState() => _ExportScreenState();
 }
 
-class _ExportScreenState extends State<ExportScreen> {
+class _ExportScreenState extends ConsumerState<ExportScreen> {
   final _repo = ExportRepository();
+  final _logRepo = LogRepository();
+  final _notifRepo = NotificationRepository();
   String? _generatingKey;
 
   Future<void> _export({
@@ -48,6 +55,21 @@ class _ExportScreenState extends State<ExportScreen> {
       await SharePlus.instance.share(
         ShareParams(files: [XFile(file.path)], subject: fileLabel),
       );
+
+      final username = ref.read(authControllerProvider)?.username ?? 'unknown';
+      await _logRepo.logAction(
+        actionType: ActionType.export_,
+        username: username,
+        details: 'تصدير تقرير: $fileLabel (${rows.length} صف)',
+      );
+      // إشعار مخصص لقاعدة المعرفة بس (نقطة ١١ في قايمة الإشعارات) —
+      // باقي التقارير بتتسجل في السجل الموحّد من غير إشعار مستقل ليها.
+      if (key == 'kb') {
+        await _notifRepo.create(
+          notifType: NotificationEventType.kbExport.dbValue,
+          message: '$username صدّر قاعدة المعرفة (${rows.length} صف)',
+        );
+      }
     } catch (e) {
       _showSnack('فشل التصدير: $e', isError: true);
     } finally {
