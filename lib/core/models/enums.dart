@@ -176,6 +176,13 @@ enum ApprovalStatus {
 /// بس، القايمة دلوقتي بتغطي كل حدث حقيقي في النظام، كل واحد قابل
 /// للتشغيل/الإيقاف لوحده من notification_settings. القيم دي هي نفسها
 /// notif_type المُستخدمة في NotificationRepository.create/getAllSettings.
+///
+/// ملحوظة: مفيش نوع عام "approval_created" — الثلاثة أنواع طلبات
+/// الموافقة (تعديل رقم قطعة/سريال/استيراد قاعدة معرفة) بترسل إشعارها
+/// الخاص المحدد لحظة إنشاء الطلب نفسه (part_number_edit/serial_edit/
+/// kb_import)، فنوع عام إضافي هيبقى تكرار مالوش استخدام حقيقي.
+/// approval_resolved هو النوع العام الصحيح — بيغطي لحظة الحسم (قبول/
+/// رفض) بغض النظر عن نوع الطلب.
 enum NotificationEventType {
   partEntry('part_entry', 'تسجيل قطعة جديدة'),
   dispatch('dispatch', 'صرف قطعة'),
@@ -191,7 +198,6 @@ enum NotificationEventType {
   permissionsChanged('permissions_changed', 'تعديل صلاحيات مستخدم'),
   adminPasswordReset('admin_password_reset', 'إعادة تعيين كلمة مرور (أدمن)'),
   selfPasswordChange('self_password_change', 'تغيير كلمة مرور شخصي'),
-  approvalCreated('approval_created', 'طلب موافقة جديد'),
   approvalResolved('approval_resolved', 'الرد على طلب موافقة');
 
   const NotificationEventType(this.dbValue, this.arabicLabel);
@@ -206,7 +212,7 @@ enum NotificationEventType {
 }
 
 /// تجميع منطقي لأنواع الإشعارات لعرضها كقوائم مجمّعة/منسدلة بدل قايمة
-/// مسطحة طويلة من ١٦ Switch (طلب الجولة الثالثة: "شكل لطيف").
+/// مسطحة طويلة (طلب الجولة الثالثة: "شكل لطيف").
 const Map<String, List<NotificationEventType>> notificationEventGroups = {
   'المخزون والقطع': [
     NotificationEventType.partEntry,
@@ -231,7 +237,6 @@ const Map<String, List<NotificationEventType>> notificationEventGroups = {
     NotificationEventType.selfPasswordChange,
   ],
   'الموافقات': [
-    NotificationEventType.approvalCreated,
     NotificationEventType.approvalResolved,
   ],
 };
