@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/models/enums.dart';
+import '../../../core/repositories/notification_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// "حسابي" — متاحة لأي دور (عكس شاشة إعدادات الأدمن اللي فيها نفس
@@ -20,6 +22,7 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
   final _confirmPasswordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   bool _changing = false;
+  final _notifRepo = NotificationRepository();
 
   @override
   void dispose() {
@@ -54,6 +57,10 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
         _newPasswordController.clear();
         _confirmPasswordController.clear();
         _showSnack('تم تغيير كلمة المرور بنجاح');
+        await _notifRepo.create(
+          notifType: NotificationEventType.selfPasswordChange.dbValue,
+          message: '$username غيّر كلمة المرور الشخصية',
+        );
       } else {
         _showSnack(data?['error']?.toString() ?? 'فشل التغيير', isError: true);
       }
