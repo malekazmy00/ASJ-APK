@@ -10,6 +10,7 @@ import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
+import '../../item_timeline/presentation/item_timeline_screen.dart';
 
 /// صفحة تفاصيل قطعة واحدة كاملة (الجولة الثالثة، نقطة ٢) — بتفتح من
 /// بطاقة القطعة في InventoryGroupItemsScreen، وفيها بيانات القطعة
@@ -288,6 +289,18 @@ class _InventoryItemDetailScreenState
     }
   }
 
+  Future<void> _openTimeline() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('تتبع القطعة')),
+        body: ItemTimelineScreen(
+          initialPartNumber: _item.partNumber,
+          initialItemId: _item.itemId,
+        ),
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -354,6 +367,11 @@ class _InventoryItemDetailScreenState
                     style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
                     label: const Text('استرجاع للمخزون'),
                   ),
+                OutlinedButton.icon(
+                  onPressed: _openTimeline,
+                  icon: const Icon(Icons.timeline_outlined),
+                  label: const Text('تتبع'),
+                ),
                 OutlinedButton.icon(
                   onPressed: _editBasicFields,
                   icon: const Icon(Icons.edit_outlined),
