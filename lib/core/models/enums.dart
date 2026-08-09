@@ -171,3 +171,67 @@ enum ApprovalStatus {
         orElse: () => ApprovalStatus.pending,
       );
 }
+
+/// أنواع أحداث الإشعارات — الجولة الثالثة (نقطة ١١): بدل ٤ أنواع ثابتة
+/// بس، القايمة دلوقتي بتغطي كل حدث حقيقي في النظام، كل واحد قابل
+/// للتشغيل/الإيقاف لوحده من notification_settings. القيم دي هي نفسها
+/// notif_type المُستخدمة في NotificationRepository.create/getAllSettings.
+enum NotificationEventType {
+  partEntry('part_entry', 'تسجيل قطعة جديدة'),
+  dispatch('dispatch', 'صرف قطعة'),
+  returnToStock('return', 'استرجاع للمخزون'),
+  partNumberEdit('part_number_edit', 'تعديل رقم القطعة'),
+  serialEdit('serial_edit', 'تعديل الرقم التسلسلي'),
+  newQuery('new_query', 'استعلام/بحث جديد'),
+  kbImport('kb_import', 'استيراد قاعدة معرفة'),
+  kbExport('kb_export', 'تصدير قاعدة معرفة'),
+  login('login', 'تسجيل دخول'),
+  sessionEnd('session_end', 'انتهاء جلسة'),
+  userCreated('user_created', 'إنشاء حساب مستخدم'),
+  permissionsChanged('permissions_changed', 'تعديل صلاحيات مستخدم'),
+  adminPasswordReset('admin_password_reset', 'إعادة تعيين كلمة مرور (أدمن)'),
+  selfPasswordChange('self_password_change', 'تغيير كلمة مرور شخصي'),
+  approvalCreated('approval_created', 'طلب موافقة جديد'),
+  approvalResolved('approval_resolved', 'الرد على طلب موافقة');
+
+  const NotificationEventType(this.dbValue, this.arabicLabel);
+  final String dbValue;
+  final String arabicLabel;
+
+  static NotificationEventType fromDb(String? value) =>
+      NotificationEventType.values.firstWhere(
+        (e) => e.dbValue == value,
+        orElse: () => NotificationEventType.partEntry,
+      );
+}
+
+/// تجميع منطقي لأنواع الإشعارات لعرضها كقوائم مجمّعة/منسدلة بدل قايمة
+/// مسطحة طويلة من ١٦ Switch (طلب الجولة الثالثة: "شكل لطيف").
+const Map<String, List<NotificationEventType>> notificationEventGroups = {
+  'المخزون والقطع': [
+    NotificationEventType.partEntry,
+    NotificationEventType.dispatch,
+    NotificationEventType.returnToStock,
+    NotificationEventType.partNumberEdit,
+    NotificationEventType.serialEdit,
+  ],
+  'البحث والاستعلام': [
+    NotificationEventType.newQuery,
+  ],
+  'قاعدة المعرفة': [
+    NotificationEventType.kbImport,
+    NotificationEventType.kbExport,
+  ],
+  'الحسابات والجلسات': [
+    NotificationEventType.login,
+    NotificationEventType.sessionEnd,
+    NotificationEventType.userCreated,
+    NotificationEventType.permissionsChanged,
+    NotificationEventType.adminPasswordReset,
+    NotificationEventType.selfPasswordChange,
+  ],
+  'الموافقات': [
+    NotificationEventType.approvalCreated,
+    NotificationEventType.approvalResolved,
+  ],
+};
