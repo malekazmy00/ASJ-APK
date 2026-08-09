@@ -123,7 +123,7 @@ class LogRepository {
 
     // المصدر الأساسي: transactions_log (إضافة/صرف/استرجاع/تعديل/بحث
     // مسجّل/دخول-خروج/تصدير-استيراد/إدارة مستخدمين)
-    if (wantAll || _isTxLogType(eventType!)) {
+    if (wantAll || _isTxLogType(eventType)) {
       var q = _client.from('transactions_log').select();
       if (!wantAll) q = q.eq('action_type', eventType);
       if (since != null) q = q.gte('timestamp', since.toIso8601String());
