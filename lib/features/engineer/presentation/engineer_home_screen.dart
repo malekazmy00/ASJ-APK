@@ -600,8 +600,7 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
     await _inventoryRepo.deletePermanently(item.itemId!);
     _load();
   }
-
-  @override
+@override
   Widget build(BuildContext context) {
     return Column(
       children: [
@@ -1060,21 +1059,29 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
                     child: OutlinedButton.icon(
                       onPressed: () => _pickImage(ImageSource.camera),
                       icon: const Icon(Icons.photo_camera_outlined),
-                      label: const Text('صورة جديدة'),
+                      label: const Text('كاميرا'),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _reanalyzing ? null : _reanalyze,
-                      icon: _reanalyzing
-                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.auto_awesome),
-                      label: const Text('إعادة تحليل'),
+                      onPressed: () => _pickImage(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('من المعرض'),
                     ),
                   ),
                 ],
               ),
+            if (_pickedImage == null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _reanalyzing ? null : _reanalyze,
+                icon: _reanalyzing
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.auto_awesome),
+                label: const Text('إعادة تحليل (بدون صورة، برقم القطعة المكتوب)'),
+              ),
+            ],
             if (_pickedImage != null) ...[
               const SizedBox(height: 8),
               ElevatedButton.icon(
