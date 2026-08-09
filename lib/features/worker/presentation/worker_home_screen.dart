@@ -1,646 +1,383 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/models/enums.dart';
-import '../../../core/models/inventory_item.dart';
-import '../../../core/repositories/inventory_repository.dart';
-import '../../../core/repositories/knowledge_base_repository.dart';
-import '../../../core/repositories/log_repository.dart';
-import '../../../core/widgets/barcode_scanner_page.dart';
+import '../../../core/models/app_user.dart';
+import '../../../core/widgets/asj_logo.dart';
+import '../../../core/widgets/locked_feature_placeholder.dart';
+import '../../../core/repositories/user_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
+import '../../worker/presentation/worker_home_screen.dart';
+import '../../stickers/presentation/stickers_screen.dart';
+import '../../engineer/presentation/engineer_home_screen.dart';
+import '../../item_timeline/presentation/item_timeline_screen.dart';
+import '../../inventory_summary/presentation/inventory_summary_screen.dart';
+import '../../analytics/presentation/analytics_screen.dart';
+import '../../activity_log/presentation/activity_log_screen.dart';
+import '../../export/presentation/export_screen.dart';
+import '../../admin/presentation/admin_home_screen.dart';
+import '../../knowledge_import/presentation/knowledge_import_screen.dart';
+import '../../settings/presentation/admin_settings_screen.dart';
+import '../../user_activity/presentation/user_activity_screen.dart';
+import '../../account/presentation/my_account_screen.dart';
+import '../../advanced_search/presentation/advanced_search_screen.dart';
+import '../../approvals/presentation/approvals_screen.dart';
 
-/// محتوى شاشة الإدخال - تبويب داخل الشاشة الموحّدة (role_home_screen.dart).
-/// ٣ أنواع إدخال: قطعة برقم / قطعة بدون رقم / معدة شغل — كل قطعة
-/// بتتسجل لوحدها (اتشالت خانة "عدد القطع")، وبعد الحفظ بيبان رقم الـ
-/// ID بشكل واضح عشان يتكتب على القطعة فعلياً.
-enum _EntryMode { withPartNumber, withoutPartNumber, equipment }
+/// وصف تبويب واحد في التنقّل الموحّد. لازم id ثابت مميّز (يُستخدم في
+/// user_tab_overrides). إما مربوط بدور أدنى مطلوب (requiredRole) وإما
+/// بصلاحية فردية (permission) — وفوق الاتنين، تخصيص فردي لكل حساب
+/// (override) بيغلب أي افتراضي.
+///
+/// ملحوظة (الجولة الثالثة، نقطة ١): تبويب "حسابي" اتشال خالص من
+/// القايمة دي — مش تابع لنظام override/role زي باقي التبويبات، وبقى
+/// عنصر ثابت منفصل تماماً في شريط التبويبات (راجع _RoleHomeScreenState).
+class _NavTab {
+  final String id;
+  final String label;
+  final IconData icon;
+  final Widget Function() builder;
+  final UserRole? requiredRole;
+  final bool Function(AppUser? user)? permission;
 
-class WorkerBody extends ConsumerStatefulWidget {
-  const WorkerBody({super.key});
+  const _NavTab({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.builder,
+    this.requiredRole,
+    this.permission,
+  });
 
-  @override
-  ConsumerState<WorkerBody> createState() => _WorkerBodyState();
+  bool isUnlocked(AppUser? user, Map<String, bool> overrides) {
+    if (user == null) return false;
+    if (overrides.containsKey(id)) return overrides[id]!;
+    if (user.role == UserRole.admin) return true; // الأدمن مفتوح له كل حاجة دايماً
+    if (requiredRole != null) return _roleLevel(user.role) >= _roleLevel(requiredRole!);
+    if (permission != null) return permission!(user);
+    return true;
+  }
+
+  static int _roleLevel(UserRole role) {
+    switch (role) {
+      case UserRole.worker:
+        return 1;
+      case UserRole.engineer:
+        return 2;
+      case UserRole.admin:
+        return 3;
+    }
+  }
 }
 
-class _WorkerBodyState extends ConsumerState<WorkerBody> {
-  final _inputController = TextEditingController();
-  final _locationController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  final _notesController = TextEditingController();
+/// نقطة الدخول الوحيدة بعد تسجيل الدخول. تنقّل موحّد لكل الأدوار: كل
+/// التبويبات ظاهرة لأي مستخدم بنفس الشكل بالظبط، والأدمن ممكن يخصّص
+/// أي تبويب لأي حساب فوق الافتراضي حسب الدور (راجع UsersTab). تبويب
+/// "حسابي" وحده مستثنى من كل ده، وثابت دايماً لأي مستخدم مسجّل دخول.
+class RoleHomeScreen extends ConsumerStatefulWidget {
+  const RoleHomeScreen({super.key});
 
-  String _itemType = defaultItemTypes.first;
-  ItemCondition _condition = ItemCondition.used;
-  OwnershipStatus _ownership = OwnershipStatus.owned;
-  _EntryMode _mode = _EntryMode.withPartNumber;
+  @override
+  ConsumerState<RoleHomeScreen> createState() => _RoleHomeScreenState();
+}
 
-  bool _isAnalyzing = false;
-  bool _isSaving = false;
-  Map<String, dynamic>? _aiResult;
-  List<int> _lastSavedIds = [];
-  final ImagePicker _picker = ImagePicker();
-  XFile? _pickedImage;
+class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
+    with SingleTickerProviderStateMixin {
+  late final List<_NavTab> _tabs = [
+    // -- تبويبات العامل --
+    _NavTab(
+      id: 'entry',
+      label: 'تسجيل قطعة',
+      icon: Icons.add_box_outlined,
+      requiredRole: UserRole.worker,
+      builder: () => const WorkerBody(),
+    ),
+    _NavTab(
+      id: 'stickers',
+      label: 'الاستيكرات',
+      icon: Icons.sell_outlined,
+      requiredRole: UserRole.worker,
+      builder: () => const StickersScreen(),
+    ),
+    // -- تبويبات المهندس --
+    _NavTab(
+      id: 'search',
+      label: 'بحث',
+      icon: Icons.search,
+      requiredRole: UserRole.engineer,
+      builder: () => const SmartSearchTab(),
+    ),
+    _NavTab(
+      id: 'edit_dashboard',
+      label: 'لوحة التعديل',
+      icon: Icons.edit_note,
+      permission: (u) => u?.canEdit ?? false,
+      builder: () => const EditDashboardTab(),
+    ),
+    _NavTab(
+      id: 'item_timeline',
+      label: 'تتبع قطعة',
+      icon: Icons.timeline_outlined,
+      permission: (u) => u?.canTrack ?? false,
+      builder: () => const ItemTimelineScreen(),
+    ),
+    _NavTab(
+      id: 'activity_log',
+      label: 'سجل النشاط',
+      icon: Icons.receipt_long_outlined,
+      permission: (u) => u?.canTrack ?? false,
+      builder: () => const ActivityLogScreen(),
+    ),
+    _NavTab(
+      id: 'inventory_summary',
+      label: 'المخزون',
+      icon: Icons.inventory_2_outlined,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const InventorySummaryScreen(),
+    ),
+    _NavTab(
+      id: 'analytics',
+      label: 'تحليل البيانات',
+      icon: Icons.bar_chart_outlined,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const AnalyticsScreen(),
+    ),
+    _NavTab(
+      id: 'export',
+      label: 'التصدير',
+      icon: Icons.ios_share,
+      permission: (u) => u?.canExport ?? false,
+      builder: () => const ExportScreen(),
+    ),
+    // -- تبويبات الأدمن --
+    _NavTab(
+      id: 'users',
+      label: 'المستخدمون',
+      icon: Icons.people_outline,
+      requiredRole: UserRole.admin,
+      builder: () => const UsersTab(),
+    ),
+    _NavTab(
+      id: 'notifications',
+      label: 'الإشعارات',
+      icon: Icons.notifications_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const NotificationsTab(),
+    ),
+    _NavTab(
+      id: 'approvals',
+      label: 'الموافقات',
+      icon: Icons.pending_actions,
+      requiredRole: UserRole.admin,
+      builder: () => const ApprovalsScreen(),
+    ),
+    _NavTab(
+      id: 'user_activity',
+      label: 'تتبع مستخدم',
+      icon: Icons.person_search_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const UserActivityScreen(),
+    ),
+    _NavTab(
+      id: 'kb_import',
+      label: 'استيراد قاعدة المعرفة',
+      icon: Icons.upload_file_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const KnowledgeImportScreen(),
+    ),
+    _NavTab(
+      id: 'advanced_search',
+      label: 'بحث متقدم',
+      icon: Icons.manage_search,
+      requiredRole: UserRole.admin,
+      builder: () => const AdvancedSearchScreen(),
+    ),
+    _NavTab(
+      id: 'settings',
+      label: 'الإعدادات',
+      icon: Icons.settings_outlined,
+      requiredRole: UserRole.admin,
+      builder: () => const AdminSettingsScreen(),
+    ),
+    // ملحوظة: تبويب "حسابي" اتشال من هنا نهائياً — بقى عنصر ثابت
+    // منفصل، مش عضو في القايمة دي خالص (راجع _fixedTabIndex تحت).
+  ];
 
-  final _inventoryRepo = InventoryRepository();
-  final _knowledgeRepo = KnowledgeBaseRepository();
-  final _logRepo = LogRepository();
+  /// فهرس تبويب "حسابي" الثابت في TabController — دايماً صفر، وموجود
+  /// في TabBarView بس مش في القايمة القابلة للتمرير/التخصيص فوق.
+  static const int _fixedTabIndex = 0;
 
-  late final TextEditingController _partNumberField = TextEditingController();
-  late final TextEditingController _partModelField = TextEditingController();
-  late final TextEditingController _serialField = TextEditingController();
-  late final TextEditingController _brandField = TextEditingController();
-  late final TextEditingController _categoryField = TextEditingController();
-  late final TextEditingController _compatibleModelField = TextEditingController();
-  late final TextEditingController _additionalCompatField = TextEditingController();
-  late final TextEditingController _marketValueField = TextEditingController();
-  late final TextEditingController _notesField = TextEditingController();
+  late final TabController _tabController =
+      TabController(length: _tabs.length + 1, vsync: this);
+  final _userRepo = UserRepository();
+  Map<String, bool> _overrides = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOverrides();
+  }
+
+  Future<void> _loadOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _userRepo.getTabOverrides(username);
+    if (mounted) setState(() => _overrides = overrides);
+  }
 
   @override
   void dispose() {
-    _inputController.dispose();
-    _locationController.dispose();
-    _descriptionController.dispose();
-    _notesController.dispose();
-    _partNumberField.dispose();
-    _partModelField.dispose();
-    _serialField.dispose();
-    _brandField.dispose();
-    _categoryField.dispose();
-    _compatibleModelField.dispose();
-    _additionalCompatField.dispose();
-    _marketValueField.dispose();
-    _notesField.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final file = await _picker.pickImage(
-      source: source,
-      imageQuality: 70,
-      maxWidth: 1280,
-    );
-    if (file != null) setState(() => _pickedImage = file);
-  }
-
-  Future<void> _analyze() async {
-    final text = _inputController.text.trim();
-    if (text.isEmpty && _pickedImage == null) {
-      _showSnack('اكتب رقم القطعة/وصفها أو التقط صورة الأول', isError: true);
-      return;
-    }
-    setState(() {
-      _isAnalyzing = true;
-      _aiResult = null;
-      _lastSavedIds = [];
-    });
-
-    try {
-      String? imageBase64;
-      if (_pickedImage != null) {
-        final bytes = await File(_pickedImage!.path).readAsBytes();
-        imageBase64 = base64Encode(bytes);
-      }
-
-      final Map<String, dynamic> requestBody = {
-        'partNumberOrText': text.isNotEmpty ? text : 'غير معروف - حلل من الصورة',
-      };
-      if (imageBase64 != null) {
-        requestBody['imageBase64'] = imageBase64;
-      }
-
-      final response = await Supabase.instance.client.functions.invoke(
-        'analyze-part',
-        body: requestBody,
-      );
-
-      final data = response.data;
-      if (data is! Map || data['success'] != true) {
-        final errMsg = (data is Map ? data['error'] : null) ?? 'رد غير متوقع من الخادم';
-        _showSnack('تعذر التحليل: $errMsg', isError: true);
-        return;
-      }
-
-      final result = Map<String, dynamic>.from(data['result'] as Map);
-      setState(() {
-        _aiResult = result;
-        _partNumberField.text = result['Part_Number'] ?? '';
-        _partModelField.text = result['Part_Model'] ?? '';
-        _serialField.text = result['Serial_Number'] ?? '';
-        _brandField.text = result['Brand'] ?? '';
-        _categoryField.text = result['Category'] ?? '';
-        _compatibleModelField.text = result['Compatible_Model'] ?? '';
-        _additionalCompatField.text = result['Additional_Compatibility'] ?? '';
-        _marketValueField.text = result['Market_Value'] ?? '';
-        _notesField.text = result['Gemini_Insights'] ?? '';
-      });
-    } catch (e) {
-      _showSnack('خطأ في الاتصال بخدمة التحليل: $e', isError: true);
-    } finally {
-      if (mounted) setState(() => _isAnalyzing = false);
-    }
-  }
-
-  Future<void> _onSavePressed() async {
-    // تأكيد بس في مسار "برقم قطعة" لو التحليل معرفش يحدد رقم واضح.
-    // مش مطلوب في مسار "بدون رقم" ولا "معدة شغل" لأنهم أصلاً من غير رقم.
-    if (_mode == _EntryMode.withPartNumber && _partNumberField.text.trim().isEmpty) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('رقم القطعة غير واضح'),
-          content: const Text(
-            'التحليل ما قدرش يحدد رقم القطعة. متأكد إنك عاوز تحفظ القطعة من غير رقم؟',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('احفظ من غير رقم'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-    _save();
-  }
-
-  Future<void> _save() async {
-    final username = ref.read(authControllerProvider)?.username ?? 'unknown';
-    final isEquipment = _mode == _EntryMode.equipment;
-    final hasPartNumber = _mode == _EntryMode.withPartNumber;
-    final partNumber = hasPartNumber && _partNumberField.text.trim().isNotEmpty
-        ? _partNumberField.text.trim()
-        : 'PENDING';
-
-    setState(() => _isSaving = true);
-    try {
-      final item = InventoryItem(
-        itemType: _itemType,
-        partNumber: partNumber,
-        description: _descriptionController.text.trim().isEmpty
-            ? null
-            : _descriptionController.text.trim(),
-        notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
-        entryType: isEquipment ? EntryType.equipment.dbValue : EntryType.part.dbValue,
-        location: _locationController.text.trim().isEmpty ? null : _locationController.text.trim(),
-        condition: _condition.dbValue,
-        status: 'Available',
-        serialNumber: _serialField.text.trim().isEmpty ? null : _serialField.text.trim(),
-        ownershipStatus: _ownership.dbValue,
-      );
-
-      final saved = await _inventoryRepo.bulkInsert([item]);
-
-      if (hasPartNumber && partNumber != 'PENDING') {
-        await _knowledgeRepo.createOrAppendInsight(
-          partNumber: partNumber,
-          geminiInsights: _notesField.text.trim(),
-        );
-        await _knowledgeRepo.setPartModelIfEmpty(partNumber, _partModelField.text.trim());
-      }
-
-      for (final saved1 in saved) {
-        if (saved1.itemId != null) {
-          await _logRepo.logAction(
-            itemId: saved1.itemId,
-            actionType: ActionType.insert,
-            username: username,
-            details: '${isEquipment ? 'إضافة معدة' : 'إضافة قطعة'} ${saved1.itemType} - '
-                '$partNumber (${_ownership.arabicLabel})',
-          );
-        }
-      }
-
-      setState(() {
-        _lastSavedIds = saved.map((e) => e.itemId!).toList();
-        _aiResult = null;
-        _inputController.clear();
-        _descriptionController.clear();
-        _notesController.clear();
-        _pickedImage = null;
-        _partNumberField.clear();
-        _partModelField.clear();
-        _serialField.clear();
-      });
-      _showSnack('تم الحفظ بنجاح');
-    } catch (e) {
-      _showSnack('فشل الحفظ: $e', isError: true);
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
-
-  void _showSnack(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.danger : AppColors.success,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isEquipment = _mode == _EntryMode.equipment;
-    final hasPartNumber = _mode == _EntryMode.withPartNumber;
-    final showAnalysis = !isEquipment; // البحث بالذكاء الاصطناعي متاح لمسارَي القطع بس
+    final user = ref.watch(authControllerProvider);
+    if (user == null) return const SizedBox.shrink();
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        if (_lastSavedIds.isNotEmpty) _SavedIdsBanner(ids: _lastSavedIds),
-
-        _SectionCard(
-          title: 'نوع الإدخال',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _ThreeWayToggle(
-                mode: _mode,
-                onChanged: (m) => setState(() => _mode = m),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                isEquipment
-                    ? 'معدة شغل (عدة/جهاز مساعد) — بتاخد ID خاص بيها زي أي قطعة.'
-                    : hasPartNumber
-                        ? 'القطعة معاها رقم رسمي من الشركة المصنعة.'
-                        : 'للشاسيهات أو الأطقم اللي مالهاش رقم قطعة رسمي.',
-                style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-                textAlign: TextAlign.right,
-              ),
-            ],
-          ),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        titleSpacing: 0,
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const AsjLogo(size: 26),
+            const SizedBox(width: 8),
+            const Text('ASJ Medical Systems',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          ],
         ),
-
-        _SectionCard(
-          title: 'حالة الملكية',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: OwnershipStatus.values.map((o) {
-              final selected = _ownership == o;
-              return ChoiceChip(
-                label: Text(o.arabicLabel),
-                selected: selected,
-                onSelected: (_) => setState(() => _ownership = o),
-                selectedColor: AppColors.primary,
-                labelStyle: TextStyle(
-                  color: selected ? Colors.white : Colors.black87,
-                  fontWeight: FontWeight.bold,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+          ),
+        ],
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(2),
+          child: Divider(height: 2, thickness: 2, color: AppColors.accent),
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          // تبويب "حسابي" الثابت — دايماً في الفهرس صفر، مش متأثر
+          // بـ overrides ولا بترتيب باقي التبويبات.
+          const MyAccountScreen(),
+          ..._tabs.map((t) => t.isUnlocked(user, _overrides)
+              ? t.builder()
+              : const LockedFeaturePlaceholder()),
+        ],
+      ),
+      // شريط تبويبات ثابت تحت، خارج منطقة السكرول تماماً — بيفضل في
+      // مكانه مهما اتحرك المحتوى فوقه. تبويب "حسابي" دلوقتي عنصر
+      // ثابت منفصل (مش جوه ListView المتحرك) في أول الشريط، باسم
+      // المستخدم بدل "حسابي"، ومش بيتحرك ولا بيتأثر بأي تخصيص تبويبات.
+      bottomNavigationBar: SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: AppColors.accent, width: 1.6)),
+          ),
+          padding: const EdgeInsets.only(top: 8, bottom: 6),
+          child: AnimatedBuilder(
+            animation: _tabController,
+            builder: (context, _) {
+              return SizedBox(
+                height: 58,
+                child: Row(
+                  children: [
+                    const SizedBox(width: 10),
+                    _TabPill(
+                      label: user.username,
+                      icon: Icons.account_circle_outlined,
+                      selected: _tabController.index == _fixedTabIndex,
+                      onTap: () => _tabController.animateTo(_fixedTabIndex),
+                    ),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      width: 1,
+                      height: 34,
+                      color: AppColors.accent.withValues(alpha: 0.4),
+                    ),
+                    Expanded(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _tabs.length,
+                        separatorBuilder: (context, index) => const SizedBox(width: 6),
+                        itemBuilder: (context, index) {
+                          final tab = _tabs[index];
+                          final unlocked = tab.isUnlocked(user, _overrides);
+                          // +1 عشان تبويب "حسابي" الثابت ماخد الفهرس صفر
+                          final controllerIndex = index + 1;
+                          final selected = _tabController.index == controllerIndex;
+                          return _TabPill(
+                            label: tab.label,
+                            icon: unlocked ? tab.icon : Icons.lock_outline,
+                            selected: selected,
+                            onTap: () => _tabController.animateTo(controllerIndex),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                 ),
               );
-            }).toList(),
+            },
           ),
         ),
-
-        _SectionCard(
-          title: isEquipment ? 'بيانات المعدة' : 'الصورة والتحليل',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _itemType,
-                decoration: InputDecoration(labelText: isEquipment ? 'نوع المعدة' : 'نوع القطعة'),
-                items: defaultItemTypes
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (v) => setState(() => _itemType = v ?? _itemType),
-              ),
-              const SizedBox(height: 12),
-              if (showAnalysis) ...[
-                _ImagePickerRow(
-                  pickedImage: _pickedImage,
-                  onCamera: () => _pickImage(ImageSource.camera),
-                  onGallery: () => _pickImage(ImageSource.gallery),
-                  onRemove: () => setState(() => _pickedImage = null),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _inputController,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    labelText: 'رقم القطعة أو وصفها (اختياري لو مرفقة صورة)',
-                    hintText: 'مثال: 5199650 أو "بوردة تغذية سيمنس"',
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.qr_code_scanner),
-                      tooltip: 'مسح باركود',
-                      onPressed: () async {
-                        final code = await scanBarcode(context);
-                        if (code != null && code.isNotEmpty) {
-                          _inputController.text = code;
-                        }
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              if (!showAnalysis) ...[
-                TextField(
-                  controller: _descriptionController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'وصف المعدة'),
-                ),
-                const SizedBox(height: 12),
-              ],
-              if (!hasPartNumber && !isEquipment) ...[
-                TextField(
-                  controller: _descriptionController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'الوصف'),
-                ),
-                const SizedBox(height: 10),
-              ],
-              TextField(
-                controller: _notesController,
-                textAlign: TextAlign.right,
-                maxLines: 2,
-                decoration: const InputDecoration(labelText: 'ملاحظات (اختياري)'),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<ItemCondition>(
-                      initialValue: _condition,
-                      decoration: const InputDecoration(labelText: 'الحالة'),
-                      items: ItemCondition.values
-                          .map((c) => DropdownMenuItem(value: c, child: Text(c.dbValue)))
-                          .toList(),
-                      onChanged: (v) => setState(() => _condition = v ?? _condition),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _locationController,
-                      textAlign: TextAlign.right,
-                      decoration: const InputDecoration(labelText: 'الموقع'),
-                    ),
-                  ),
-                ],
-              ),
-              if (showAnalysis) ...[
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: _isAnalyzing ? null : _analyze,
-                  icon: _isAnalyzing
-                      ? const SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.auto_awesome),
-                  label: Text(_isAnalyzing ? 'جارٍ التحليل...' : 'بحث'),
-                ),
-              ],
-            ],
-          ),
-        ),
-
-        if (showAnalysis && _aiResult != null)
-          _SectionCard(
-            title: 'نتيجة التحليل (قابلة للتعديل)',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (hasPartNumber)
-                  _EditableRow(label: 'رقم القطعة', controller: _partNumberField),
-                _EditableRow(label: 'الموديل (الاسم الكودي)', controller: _partModelField),
-                _EditableRow(label: 'الرقم التسلسلي (Serial)', controller: _serialField),
-                _EditableRow(label: 'الماركة', controller: _brandField),
-                _EditableRow(label: 'الوصف/الفئة', controller: _categoryField),
-                _EditableRow(label: 'الجهاز المتوافق', controller: _compatibleModelField),
-                _EditableRow(label: 'أجهزة متوافقة إضافية', controller: _additionalCompatField),
-                _EditableRow(label: 'تقدير السعر', controller: _marketValueField),
-                _EditableRow(label: 'ملاحظات فنية', controller: _notesField, maxLines: 3),
-              ],
-            ),
-          ),
-
-        const SizedBox(height: 16),
-        ElevatedButton.icon(
-          onPressed: _isSaving ? null : _onSavePressed,
-          icon: _isSaving
-              ? const SizedBox(
-                  width: 18, height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : const Icon(Icons.save_outlined),
-          label: Text(_isSaving ? 'جارٍ الحفظ...' : 'حفظ'),
-        ),
-      ],
+      ),
     );
   }
 }
 
-/// مفتاح ثلاثي: قطعة برقم / قطعة بدون رقم / معدة شغل.
-class _ThreeWayToggle extends StatelessWidget {
-  const _ThreeWayToggle({required this.mode, required this.onChanged});
-  final _EntryMode mode;
-  final ValueChanged<_EntryMode> onChanged;
+/// زرار تبويب: أبيض بحدود فيروزي وكتابة كحلي وهو مش محدد، وكحلي ممتلئ
+/// بكتابة بيضا وهو محدد — بالظبط زي المتفق عليه في الموك أب.
+class _TabPill extends StatelessWidget {
+  const _TabPill({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: const Color(0xFFEEF2F5), borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        children: [
-          Expanded(child: _seg('برقم قطعة', _EntryMode.withPartNumber)),
-          Expanded(child: _seg('بدون رقم', _EntryMode.withoutPartNumber)),
-          Expanded(child: _seg('معدة شغل', _EntryMode.equipment)),
-        ],
-      ),
-    );
-  }
-
-  Widget _seg(String label, _EntryMode value) {
-    final active = mode == value;
     return GestureDetector(
-      onTap: () => onChanged(value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 9),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: active ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(9),
-          boxShadow: active ? [const BoxShadow(color: Color(0x1A0A2540), blurRadius: 6)] : null,
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 11.5, fontWeight: FontWeight.bold,
-            color: active ? AppColors.primary : AppColors.textMuted,
+          color: selected ? AppColors.primary : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.accent,
+            width: 1.4,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.child});
-  final String title;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 6, height: 6,
-                  decoration: const BoxDecoration(color: AppColors.accent, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 6),
-                Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: AppColors.primary)),
-              ],
+            Icon(icon, size: 17, color: selected ? Colors.white : AppColors.primary),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: FontWeight.bold,
+                color: selected ? Colors.white : AppColors.primary,
+              ),
             ),
-            const SizedBox(height: 12),
-            child,
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _EditableRow extends StatelessWidget {
-  const _EditableRow({required this.label, required this.controller, this.maxLines = 1});
-  final String label;
-  final TextEditingController controller;
-  final int maxLines;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: TextField(
-        controller: controller,
-        maxLines: maxLines,
-        textAlign: TextAlign.right,
-        decoration: InputDecoration(labelText: label),
-      ),
-    );
-  }
-}
-
-class _ImagePickerRow extends StatelessWidget {
-  const _ImagePickerRow({
-    required this.pickedImage,
-    required this.onCamera,
-    required this.onGallery,
-    required this.onRemove,
-  });
-  final XFile? pickedImage;
-  final VoidCallback onCamera;
-  final VoidCallback onGallery;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (pickedImage != null)
-          Stack(
-            alignment: Alignment.topLeft,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(File(pickedImage!.path), height: 150, width: double.infinity, fit: BoxFit.cover),
-              ),
-              IconButton.filled(
-                onPressed: onRemove,
-                style: IconButton.styleFrom(backgroundColor: AppColors.danger),
-                icon: const Icon(Icons.close, size: 18, color: Colors.white),
-              ),
-            ],
-          )
-        else
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onCamera,
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  label: const Text('التقاط صورة'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onGallery,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('من المعرض'),
-                ),
-              ),
-            ],
-          ),
-        const Padding(
-          padding: EdgeInsets.only(top: 6),
-          child: Text(
-            'الصورة تُستخدم فقط لتحليل الذكاء الاصطناعي حالياً ولا تُحفظ بشكل دائم بعد.',
-            style: TextStyle(fontSize: 11, color: AppColors.textMuted),
-            textAlign: TextAlign.right,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// بانر بعد الحفظ — بارز وواضح إن الرقم ده لازم يتكتب على القطعة نفسها.
-class _SavedIdsBanner extends StatelessWidget {
-  const _SavedIdsBanner({required this.ids});
-  final List<int> ids;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.success.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.success, width: 1.4),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Text(
-                ids.length == 1 ? 'رقم القطعة الداخلي: #${ids.first}' : 'أرقام القطع: ${ids.join('، ')}',
-                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.success),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.edit_note, color: AppColors.success),
-            ],
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'اكتب الرقم ده على القطعة نفسها — بيفضل ثابت للقطعة دي طول الوقت حتى لو خرجت ورجعت.',
-            textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-          ),
-        ],
       ),
     );
   }
