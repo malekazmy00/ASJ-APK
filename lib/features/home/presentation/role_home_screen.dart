@@ -26,6 +26,10 @@ import '../../approvals/presentation/approvals_screen.dart';
 /// user_tab_overrides). إما مربوط بدور أدنى مطلوب (requiredRole) وإما
 /// بصلاحية فردية (permission) — وفوق الاتنين، تخصيص فردي لكل حساب
 /// (override) بيغلب أي افتراضي.
+///
+/// ملحوظة (الجولة الثالثة، نقطة ١): تبويب "حسابي" اتشال خالص من
+/// القايمة دي — مش تابع لنظام override/role زي باقي التبويبات، وبقى
+/// عنصر ثابت منفصل تماماً في شريط التبويبات (راجع _RoleHomeScreenState).
 class _NavTab {
   final String id;
   final String label;
@@ -66,7 +70,8 @@ class _NavTab {
 
 /// نقطة الدخول الوحيدة بعد تسجيل الدخول. تنقّل موحّد لكل الأدوار: كل
 /// التبويبات ظاهرة لأي مستخدم بنفس الشكل بالظبط، والأدمن ممكن يخصّص
-/// أي تبويب لأي حساب فوق الافتراضي حسب الدور (راجع UsersTab).
+/// أي تبويب لأي حساب فوق الافتراضي حسب الدور (راجع UsersTab). تبويب
+/// "حسابي" وحده مستثنى من كل ده، وثابت دايماً لأي مستخدم مسجّل دخول.
 class RoleHomeScreen extends ConsumerStatefulWidget {
   const RoleHomeScreen({super.key});
 
@@ -192,17 +197,16 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       requiredRole: UserRole.admin,
       builder: () => const AdminSettingsScreen(),
     ),
-    // -- تبويب شخصي، متاح لأي حد --
-    _NavTab(
-      id: 'my_account',
-      label: 'حسابي',
-      icon: Icons.account_circle_outlined,
-      requiredRole: UserRole.worker,
-      builder: () => const MyAccountScreen(),
-    ),
+    // ملحوظة: تبويب "حسابي" اتشال من هنا نهائياً — بقى عنصر ثابت
+    // منفصل، مش عضو في القايمة دي خالص (راجع _fixedTabIndex تحت).
   ];
 
-  late final TabController _tabController = TabController(length: _tabs.length, vsync: this);
+  /// فهرس تبويب "حسابي" الثابت في TabController — دايماً صفر، وموجود
+  /// في TabBarView بس مش في القايمة القابلة للتمرير/التخصيص فوق.
+  static const int _fixedTabIndex = 0;
+
+  late final TabController _tabController =
+      TabController(length: _tabs.length + 1, vsync: this);
   final _userRepo = UserRepository();
   Map<String, bool> _overrides = {};
 
@@ -257,14 +261,19 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: _tabs
-            .map((t) => t.isUnlocked(user, _overrides)
-                ? t.builder()
-                : const LockedFeaturePlaceholder())
-            .toList(),
+        children: [
+          // تبويب "حسابي" الثابت — دايماً في الفهرس صفر، مش متأثر
+          // بـ overrides ولا بترتيب باقي التبويبات.
+          const MyAccountScreen(),
+          ..._tabs.map((t) => t.isUnlocked(user, _overrides)
+              ? t.builder()
+              : const LockedFeaturePlaceholder()),
+        ],
       ),
       // شريط تبويبات ثابت تحت، خارج منطقة السكرول تماماً — بيفضل في
-      // مكانه مهما اتحرك المحتوى فوقه.
+      // مكانه مهما اتحرك المحتوى فوقه. تبويب "حسابي" دلوقتي عنصر
+      // ثابت منفصل (مش جوه ListView المتحرك) في أول الشريط، باسم
+      // المستخدم بدل "حسابي"، ومش بيتحرك ولا بيتأثر بأي تخصيص تبويبات.
       bottomNavigationBar: SafeArea(
         child: Container(
           decoration: const BoxDecoration(
@@ -277,22 +286,43 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
             builder: (context, _) {
               return SizedBox(
                 height: 58,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  itemCount: _tabs.length,
-                  separatorBuilder: (context, index) => const SizedBox(width: 6),
-                  itemBuilder: (context, index) {
-                    final tab = _tabs[index];
-                    final unlocked = tab.isUnlocked(user, _overrides);
-                    final selected = _tabController.index == index;
-                    return _TabPill(
-                      label: tab.label,
-                      icon: unlocked ? tab.icon : Icons.lock_outline,
-                      selected: selected,
-                      onTap: () => _tabController.animateTo(index),
-                    );
-                  },
+                child: Row(
+                  children: [
+                    const SizedBox(width: 10),
+                    _TabPill(
+                      label: user.username,
+                      icon: Icons.account_circle_outlined,
+                      selected: _tabController.index == _fixedTabIndex,
+                      onTap: () => _tabController.animateTo(_fixedTabIndex),
+                    ),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      width: 1,
+                      height: 34,
+                      color: AppColors.accent.withValues(alpha: 0.4),
+                    ),
+                    Expanded(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _tabs.length,
+                        separatorBuilder: (context, index) => const SizedBox(width: 6),
+                        itemBuilder: (context, index) {
+                          final tab = _tabs[index];
+                          final unlocked = tab.isUnlocked(user, _overrides);
+                          // +1 عشان تبويب "حسابي" الثابت ماخد الفهرس صفر
+                          final controllerIndex = index + 1;
+                          final selected = _tabController.index == controllerIndex;
+                          return _TabPill(
+                            label: tab.label,
+                            icon: unlocked ? tab.icon : Icons.lock_outline,
+                            selected: selected,
+                            onTap: () => _tabController.animateTo(controllerIndex),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                 ),
               );
             },
