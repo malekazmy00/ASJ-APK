@@ -18,6 +18,8 @@ dependencies:
   csv: ^6.0.0
   syncfusion_flutter_charts: ^31.1.17
   qr_flutter: ^4.1.0
+  printing: ^5.13.4
+  pdf: ^3.11.1
   path_provider: ^2.1.0
   share_plus: ^12.0.2
   file_picker: ^10.3.10
