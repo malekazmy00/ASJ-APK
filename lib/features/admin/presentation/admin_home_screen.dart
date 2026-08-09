@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/app_user.dart';
+import '../../../core/models/enums.dart';
 import '../../../core/models/notification.dart';
 import '../../../core/repositories/user_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
@@ -19,6 +20,7 @@ class UsersTab extends ConsumerStatefulWidget {
 
 class _UsersTabState extends ConsumerState<UsersTab> {
   final _userRepo = UserRepository();
+  final _notifRepo = NotificationRepository();
   List<AppUser> _users = [];
   bool _loading = true;
 
@@ -43,6 +45,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
       canExport: permission == 'export' ? value : null,
       canTrack: permission == 'track' ? value : null,
       canEdit: permission == 'edit' ? value : null,
+    );
+    final adminUsername = ref.read(authControllerProvider)?.username ?? 'unknown';
+    await _notifRepo.create(
+      notifType: NotificationEventType.permissionsChanged.dbValue,
+      message: '$adminUsername عدّل صلاحية "$permission" لحساب ${user.username}',
     );
     _load();
   }
@@ -112,6 +119,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     );
     final data = response.data as Map<String, dynamic>?;
     if (data?['success'] == true) {
+      await _notifRepo.create(
+        notifType: NotificationEventType.userCreated.dbValue,
+        message: '${ref.read(authControllerProvider)?.username ?? 'أدمن'} '
+            'أنشأ حساب جديد: ${usernameCtrl.text.trim()} ($role)',
+      );
       _load();
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -129,6 +141,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     final Map<String, bool?> tabChoices = {
       for (final tab in allNavTabs) tab.$1: overrides[tab.$1],
     };
+    // ملحوظة (الجولة الثالثة، نقطة ٧ — إصلاح باج): ExpansionTile كان
+    // بيحرّك السهم بس القايمة مابتظهرش، لأن الأنيميشن بتاعه مستقل عن
+    // setDialogState بتاعة الـ Dialog. استبدلناه بـ bool بسيط متحكم
+    // فيه من نفس setDialogState، فمفيش تعارض في دورة الـ rebuild.
+    bool tabsExpanded = false;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -172,37 +189,46 @@ class _UsersTabState extends ConsumerState<UsersTab> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Theme(
-                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                    child: ExpansionTile(
-                      title: const Text('صلاحيات التبويبات (تخصيص فردي)', textAlign: TextAlign.right),
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.zero,
-                      children: allNavTabs.map((tab) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: DropdownButton<bool?>(
-                                  isExpanded: true,
-                                  value: tabChoices[tab.$1],
-                                  items: const [
-                                    DropdownMenuItem(value: null, child: Text('افتراضي حسب الدور')),
-                                    DropdownMenuItem(value: true, child: Text('إظهار دائماً')),
-                                    DropdownMenuItem(value: false, child: Text('إخفاء دائماً')),
-                                  ],
-                                  onChanged: (v) => setDialogState(() => tabChoices[tab.$1] = v),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(tab.$2, textAlign: TextAlign.right),
-                            ],
+                  InkWell(
+                    onTap: () => setDialogState(() => tabsExpanded = !tabsExpanded),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Row(
+                        children: [
+                          Icon(tabsExpanded ? Icons.expand_less : Icons.expand_more),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text('صلاحيات التبويبات (تخصيص فردي)',
+                                textAlign: TextAlign.right),
                           ),
-                        );
-                      }).toList(),
+                        ],
+                      ),
                     ),
                   ),
+                  if (tabsExpanded)
+                    ...allNavTabs.map((tab) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButton<bool?>(
+                                isExpanded: true,
+                                value: tabChoices[tab.$1],
+                                items: const [
+                                  DropdownMenuItem(value: null, child: Text('افتراضي حسب الدور')),
+                                  DropdownMenuItem(value: true, child: Text('إظهار دائماً')),
+                                  DropdownMenuItem(value: false, child: Text('إخفاء دائماً')),
+                                ],
+                                onChanged: (v) => setDialogState(() => tabChoices[tab.$1] = v),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(tab.$2, textAlign: TextAlign.right),
+                          ],
+                        ),
+                      );
+                    }),
                 ],
               ),
             ),
@@ -235,7 +261,13 @@ class _UsersTabState extends ConsumerState<UsersTab> {
         body: {'username': user.username, 'newPassword': newPasswordCtrl.text.trim()},
       );
       final data = response.data as Map<String, dynamic>?;
-      if (data?['success'] != true && mounted) {
+      if (data?['success'] == true) {
+        await _notifRepo.create(
+          notifType: NotificationEventType.adminPasswordReset.dbValue,
+          message: '${ref.read(authControllerProvider)?.username ?? 'أدمن'} '
+              'أعاد تعيين كلمة مرور ${user.username}',
+        );
+      } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('فشل تغيير كلمة المرور: ${data?['error'] ?? ''}')),
         );
@@ -243,15 +275,23 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     }
 
     final adminUsername = ref.read(authControllerProvider)?.username ?? 'unknown';
+    bool tabOverridesChanged = false;
     for (final tab in allNavTabs) {
       final newChoice = tabChoices[tab.$1];
       final oldChoice = overrides[tab.$1];
       if (newChoice == oldChoice) continue;
+      tabOverridesChanged = true;
       if (newChoice == null) {
         await _userRepo.clearTabOverride(user.username, tab.$1);
       } else {
         await _userRepo.setTabOverride(user.username, tab.$1, newChoice, updatedBy: adminUsername);
       }
+    }
+    if (tabOverridesChanged) {
+      await _notifRepo.create(
+        notifType: NotificationEventType.permissionsChanged.dbValue,
+        message: '$adminUsername عدّل صلاحيات التبويبات لحساب ${user.username}',
+      );
     }
 
     _load();
