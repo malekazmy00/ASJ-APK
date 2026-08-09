@@ -18,6 +18,7 @@ import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../../core/widgets/barcode_scanner_page.dart';
 import '../../auth/presentation/auth_providers.dart';
+import '../../inventory_summary/presentation/inventory_group_items_screen.dart';
 
 // ---------------------------------------------------------------------
 // تبويب البحث الذكي والصرف (ودفتر الاستعلامات المدمج)
@@ -52,7 +53,6 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
   List<InventoryItem> _inventoryResults = [];
   List<KnowledgeBaseEntry> _knowledgeResults = [];
   List<EngineerQuery> _previousQueries = [];
-  final Set<int> _dispatchingIds = {}; // منع الضغط المتكرر أثناء تنفيذ الصرف
 
   bool _geminiLoading = false;
   Map<String, dynamic>? _geminiResult;
@@ -170,56 +170,49 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
     }
   }
 
-  Future<void> _dispatch(InventoryItem item) async {
-    if (_dispatchingIds.contains(item.itemId)) return; // منع تكرار الصرف لنفس القطعة
-    final result = await showDialog<_DispatchResult>(
-      context: context,
-      builder: (context) => _RecipientDialog(),
-    );
-    if (result == null || result.recipient.trim().isEmpty) return;
+  /// الجولة الثالثة (نقطة ٣): نتائج المخزون بتتجمّع بنفس منطق تبويب
+  /// المخزون (بطاقة لكل رقم قطعة/وصف، مش صف لكل قطعة فعلية) — عشان
+  /// نفس المفهوم في المكانين، مش منطق مكرر. الصرف والتفاصيل بقوا في
+  /// شاشة تفاصيل القطعة (Batch B) بدل Dialog منفصل هنا.
+  List<Map<String, dynamic>> _groupInventoryResults(List<InventoryItem> items) {
+    final groups = <String, Map<String, dynamic>>{};
+    for (final item in items) {
+      final hasPartNumber = item.partNumber != 'PENDING' && item.partNumber.isNotEmpty;
+      final key = hasPartNumber
+          ? 'pn:${item.partNumber}'
+          : 'desc:${(item.description?.trim().isNotEmpty ?? false) ? item.description!.trim() : 'غير محدد'}';
+      final displayName = hasPartNumber
+          ? item.partNumber
+          : ((item.description?.trim().isNotEmpty ?? false) ? item.description!.trim() : 'غير محدد');
 
-    setState(() => _dispatchingIds.add(item.itemId!));
-    try {
-      final username = ref.read(authControllerProvider)?.username ?? 'unknown';
-      await _inventoryRepo.updateStatus(item.itemId!, 'Out');
-      await _logRepo.logAction(
-        itemId: item.itemId,
-        actionType: ActionType.out,
-        username: username,
-        details: 'تم الصرف إلى: ${result.recipient} (${result.exitType.arabicLabel})'
-            '${result.note != null ? ' — ملاحظة: ${result.note}' : ''}',
-        exitType: result.exitType.dbValue,
-      );
-      await _notificationRepo.create(
-        notifType: NotificationEventType.dispatch.dbValue,
-        message: '$username صرف القطعة #${item.itemId} (${item.partNumber}) إلى ${result.recipient}',
-        relatedId: item.itemId,
-      );
-
-      setState(() {
-        _inventoryResults.removeWhere((e) => e.itemId == item.itemId);
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('تم صرف القطعة #${item.itemId} إلى ${result.recipient}'),
-            backgroundColor: AppColors.success,
-          ),
-        );
+      final g = groups.putIfAbsent(
+          key,
+          () => {
+                'group_key': key,
+                'display_name': displayName,
+                'item_type': item.itemType,
+                'total_count': 0,
+                'available_count': 0,
+              });
+      g['total_count'] = (g['total_count'] as int) + 1;
+      if (item.status == 'Available') {
+        g['available_count'] = (g['available_count'] as int) + 1;
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('فشل الصرف، حاول مرة أخرى'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _dispatchingIds.remove(item.itemId));
     }
+    final result = groups.values.toList();
+    result.sort((a, b) => (b['total_count'] as int).compareTo(a['total_count'] as int));
+    return result;
+  }
+
+  Future<void> _openGroup(Map<String, dynamic> group) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => InventoryGroupItemsScreen(
+          groupKey: group['group_key'] as String,
+          displayName: group['display_name'] as String,
+        ),
+      ),
+    );
   }
 
   @override
@@ -325,31 +318,21 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
           if (_inventoryResults.isEmpty)
             const _EmptyNote('غير متوفرة في المخزون حالياً.')
           else
-            ..._inventoryResults.map((item) => Card(
-                  child: ListTile(
-                    title: Text('${item.partNumber} — ${item.itemType}', textAlign: TextAlign.right),
-                    subtitle: Text(
-                      'رقم القطعة الداخلي: #${item.itemId}  •  الحالة: ${item.status}'
-                      '${item.location != null ? '  •  الموقع: ${item.location}' : ''}',
-                      textAlign: TextAlign.right,
-                    ),
-                    trailing: item.status == 'Available'
-                        ? TextButton.icon(
-                            onPressed: _dispatchingIds.contains(item.itemId)
-                                ? null
-                                : () => _dispatch(item),
-                            icon: _dispatchingIds.contains(item.itemId)
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.outbox_outlined),
-                            label: const Text('صرف'),
-                          )
-                        : Chip(label: Text(item.status)),
+            ..._groupInventoryResults(_inventoryResults).map((group) {
+              final total = group['total_count'] as int;
+              final available = group['available_count'] as int;
+              return Card(
+                child: ListTile(
+                  title: Text(group['display_name'] as String, textAlign: TextAlign.right),
+                  subtitle: Text(
+                    '${group['item_type']}  •  متاح: $available من إجمالي $total',
+                    textAlign: TextAlign.right,
                   ),
-                )),
+                  trailing: const Icon(Icons.chevron_left),
+                  onTap: () => _openGroup(group),
+                ),
+              );
+            }),
           const SizedBox(height: 16),
           _SectionHeader('من قاعدة المعرفة الداخلية', Icons.storage_outlined),
           if (_knowledgeResults.isEmpty)
@@ -469,74 +452,6 @@ class _EmptyNote extends StatelessWidget {
   }
 }
 
-class _DispatchResult {
-  final String recipient;
-  final ExitType exitType;
-  final String? note;
-  const _DispatchResult(this.recipient, this.exitType, this.note);
-}
-
-class _RecipientDialog extends StatefulWidget {
-  @override
-  State<_RecipientDialog> createState() => _RecipientDialogState();
-}
-
-class _RecipientDialogState extends State<_RecipientDialog> {
-  final _controller = TextEditingController();
-  final _noteController = TextEditingController();
-  ExitType _exitType = ExitType.sale;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('صرف القطعة'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _controller,
-            textAlign: TextAlign.right,
-            decoration: const InputDecoration(labelText: 'اسم المستلم/الجهة'),
-            autofocus: true,
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<ExitType>(
-            initialValue: _exitType,
-            decoration: const InputDecoration(labelText: 'سبب الصرف'),
-            items: ExitType.values
-                .map((e) => DropdownMenuItem(value: e, child: Text(e.arabicLabel)))
-                .toList(),
-            onChanged: (v) => setState(() => _exitType = v ?? _exitType),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _noteController,
-            textAlign: TextAlign.right,
-            maxLines: 2,
-            decoration: const InputDecoration(labelText: 'ملاحظة (اختياري)'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('إلغاء'),
-        ),
-        ElevatedButton(
-          onPressed: () => Navigator.of(context).pop(
-            _DispatchResult(
-              _controller.text,
-              _exitType,
-              _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
-            ),
-          ),
-          child: const Text('تأكيد الصرف'),
-        ),
-      ],
-    );
-  }
-}
-
 // ---------------------------------------------------------------------
 // تبويب لوحة التعديل الديناميكية
 // ---------------------------------------------------------------------
@@ -605,8 +520,7 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
     await _inventoryRepo.deletePermanently(item.itemId!);
     _load();
   }
-@override
-  Widget build(BuildContext context) {
+Widget build(BuildContext context) {
     return Column(
       children: [
         Padding(
