@@ -4,9 +4,18 @@ import '../../../core/repositories/log_repository.dart';
 import '../../../core/widgets/timeline_widget.dart';
 
 /// تتبع القطعة: تكتب رقم القطعة، تجيب كل حركاتها من entry لحد الآن
-/// (نفس الطلب الأصلي بالضبط).
+/// (نفس الطلب الأصلي بالظبط) — كتبويب عادي.
+///
+/// الجولة الثالثة (نقطة ٢): تدعم كمان فتح مباشر على قطعة بعينها من
+/// صفحة تفاصيل القطعة (زرار "تتبع") — [initialPartNumber] بيعبّي
+/// خانة البحث ويبحث تلقائي، و[initialItemId] بيستخدم لو رقم القطعة
+/// "PENDING" (قطعة من غير رقم) عشان التتبع يبقى بالـ ID الداخلي
+/// بدل البحث برقم قطعة غير موجود أصلاً.
 class ItemTimelineScreen extends StatefulWidget {
-  const ItemTimelineScreen({super.key});
+  const ItemTimelineScreen({super.key, this.initialPartNumber, this.initialItemId});
+
+  final String? initialPartNumber;
+  final int? initialItemId;
 
   @override
   State<ItemTimelineScreen> createState() => _ItemTimelineScreenState();
@@ -19,6 +28,20 @@ class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
   bool _loading = false;
   bool _searched = false;
 
+  @override
+  void initState() {
+    super.initState();
+    final hasPartNumber = widget.initialPartNumber != null &&
+        widget.initialPartNumber!.isNotEmpty &&
+        widget.initialPartNumber != 'PENDING';
+    if (hasPartNumber) {
+      _controller.text = widget.initialPartNumber!;
+      _search();
+    } else if (widget.initialItemId != null) {
+      _searchByItemId(widget.initialItemId!);
+    }
+  }
+
   Future<void> _search() async {
     final partNumber = _controller.text.trim();
     if (partNumber.isEmpty) return;
@@ -27,6 +50,22 @@ class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
       _searched = true;
     });
     final logs = await _repo.getByPartNumber(partNumber);
+    if (mounted) {
+      setState(() {
+        _logs = logs;
+        _loading = false;
+      });
+    }
+  }
+
+  /// تتبع بالـ ID الداخلي مباشرة — لقطعة من غير رقم قطعة رسمي
+  /// (part_number = 'PENDING')، البحث برقم القطعة مش هيلاقي حاجة.
+  Future<void> _searchByItemId(int itemId) async {
+    setState(() {
+      _loading = true;
+      _searched = true;
+    });
+    final logs = await _repo.getByItem(itemId);
     if (mounted) {
       setState(() {
         _logs = logs;
