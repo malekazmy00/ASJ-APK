@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/models/enums.dart';
 import '../../../core/repositories/notification_repository.dart';
-import '../../auth/presentation/auth_providers.dart';
 
-/// إعدادات الأدمن: تغيير كلمة المرور الشخصية + فحص حالة الاتصال بـ
-/// Gemini + تشغيل/إيقاف كل نوع إشعار لوحده.
+/// إعدادات الأدمن: فحص حالة الاتصال بـ Gemini + تشغيل/إيقاف كل نوع
+/// إشعار لوحده.
+///
+/// الجولة الثالثة: نقطة ١٢ — تغيير كلمة المرور الشخصية اتشال من هنا
+/// خالص، بقى موجود بس في تبويب "حسابي" الثابت. نقطة ١١ — قايمة
+/// الإشعارات اتوسّعت من ٤ لكل الأحداث الحقيقية في النظام، معروضة
+/// كمجموعات قابلة للطي (ExpansionTile عادي هنا، مش جوه Dialog، فمفيش
+/// تعارض state زي الباج اللي اتصلح في admin_home_screen.dart).
 class AdminSettingsScreen extends ConsumerStatefulWidget {
   const AdminSettingsScreen({super.key});
 
@@ -15,25 +21,12 @@ class AdminSettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
-  final _oldPasswordController = TextEditingController();
-  final _newPasswordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-  bool _changingPassword = false;
-
   bool? _geminiOk; // null = لسه ماتفحصش
   bool _checkingGemini = false;
 
   final _notificationRepo = NotificationRepository();
   Map<String, bool> _notifSettings = {};
   bool _loadingNotifSettings = true;
-
-  static const _notifTypeLabels = {
-    'new_query': 'استعلام جديد',
-    'part_number_edit': 'تعديل رقم قطعة',
-    'serial_edit': 'تعديل رقم تسلسلي',
-    'kb_import': 'استيراد قاعدة معرفة',
-  };
 
   @override
   void initState() {
@@ -47,7 +40,8 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
     if (mounted) {
       setState(() {
         _notifSettings = {
-          for (final type in _notifTypeLabels.keys) type: settings[type] ?? true,
+          for (final type in NotificationEventType.values)
+            type.dbValue: settings[type.dbValue] ?? true,
         };
         _loadingNotifSettings = false;
       });
@@ -57,49 +51,6 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
   Future<void> _toggleNotifType(String type, bool value) async {
     setState(() => _notifSettings[type] = value);
     await _notificationRepo.setTypeEnabled(type, value);
-  }
-
-  @override
-  void dispose() {
-    _oldPasswordController.dispose();
-    _newPasswordController.dispose();
-    _confirmPasswordController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _changePassword() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_newPasswordController.text != _confirmPasswordController.text) {
-      _showSnack('كلمة المرور الجديدة وتأكيدها مش متطابقين', isError: true);
-      return;
-    }
-    final username = ref.read(authControllerProvider)?.username;
-    if (username == null) return;
-
-    setState(() => _changingPassword = true);
-    try {
-      final response = await Supabase.instance.client.functions.invoke(
-        'change-password',
-        body: {
-          'username': username,
-          'oldPassword': _oldPasswordController.text,
-          'newPassword': _newPasswordController.text,
-        },
-      );
-      final data = response.data as Map<String, dynamic>?;
-      if (data?['success'] == true) {
-        _oldPasswordController.clear();
-        _newPasswordController.clear();
-        _confirmPasswordController.clear();
-        _showSnack('تم تغيير كلمة المرور بنجاح');
-      } else {
-        _showSnack(data?['error']?.toString() ?? 'فشل التغيير', isError: true);
-      }
-    } catch (e) {
-      _showSnack('خطأ في الاتصال بالخادم', isError: true);
-    } finally {
-      if (mounted) setState(() => _changingPassword = false);
-    }
   }
 
   Future<void> _checkGeminiStatus() async {
@@ -116,15 +67,6 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
     } finally {
       if (mounted) setState(() => _checkingGemini = false);
     }
-  }
-
-  void _showSnack(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.danger : AppColors.success,
-      ),
-    );
   }
 
   @override
@@ -179,58 +121,25 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
               ? const Center(child: CircularProgressIndicator())
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _notifTypeLabels.entries.map((entry) {
-                    return SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: _notifSettings[entry.key] ?? true,
-                      onChanged: (v) => _toggleNotifType(entry.key, v),
-                      title: Text(entry.value, textAlign: TextAlign.right),
+                  children: notificationEventGroups.entries.map((group) {
+                    return Theme(
+                      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                      child: ExpansionTile(
+                        title: Text(group.key, textAlign: TextAlign.right),
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: EdgeInsets.zero,
+                        children: group.value.map((type) {
+                          return SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            value: _notifSettings[type.dbValue] ?? true,
+                            onChanged: (v) => _toggleNotifType(type.dbValue, v),
+                            title: Text(type.arabicLabel, textAlign: TextAlign.right),
+                          );
+                        }).toList(),
+                      ),
                     );
                   }).toList(),
                 ),
-        ),
-        _SectionCard(
-          title: 'تغيير كلمة المرور',
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextFormField(
-                  controller: _oldPasswordController,
-                  obscureText: true,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'كلمة المرور الحالية'),
-                  validator: (v) => (v == null || v.isEmpty) ? 'مطلوب' : null,
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _newPasswordController,
-                  obscureText: true,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
-                  validator: (v) => (v == null || v.length < 6) ? '٦ أحرف على الأقل' : null,
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _confirmPasswordController,
-                  obscureText: true,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'تأكيد كلمة المرور الجديدة'),
-                  validator: (v) => (v == null || v.isEmpty) ? 'مطلوب' : null,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: _changingPassword ? null : _changePassword,
-                  child: _changingPassword
-                      ? const SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('تغيير كلمة المرور'),
-                ),
-              ],
-            ),
-          ),
         ),
       ],
     );
