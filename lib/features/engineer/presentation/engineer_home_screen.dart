@@ -190,6 +190,11 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
             '${result.note != null ? ' — ملاحظة: ${result.note}' : ''}',
         exitType: result.exitType.dbValue,
       );
+      await _notificationRepo.create(
+        notifType: NotificationEventType.dispatch.dbValue,
+        message: '$username صرف القطعة #${item.itemId} (${item.partNumber}) إلى ${result.recipient}',
+        relatedId: item.itemId,
+      );
 
       setState(() {
         _inventoryResults.removeWhere((e) => e.itemId == item.itemId);
@@ -993,6 +998,12 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
         username: widget.username,
         details: 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy'
             '${note.isNotEmpty ? ' — ملاحظة: $note' : ''}',
+      );
+      await _notificationRepo.create(
+        notifType: NotificationEventType.returnToStock.dbValue,
+        message: '${widget.username} استرجع القطعة #${widget.item.itemId} '
+            '(${widget.item.partNumber}) للمخزون',
+        relatedId: widget.item.itemId,
       );
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
