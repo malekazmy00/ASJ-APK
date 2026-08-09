@@ -3,6 +3,10 @@
 // الأدمن يوافق أو يرفض طلب معلّق (تعديل رقم قطعة/سريال، أو استيراد
 // قاعدة معرفة). لو موافقة، الدالة دي هي اللي بتطبّق التغيير فعلياً
 // وتسجّله في transactions_log.
+//
+// الجولة الثالثة (نقطة ١١): بعد الحسم (قبول أو رفض)، بيتسجل إشعار
+// 'approval_resolved' — بيتفحص notification_settings الأول زي أي
+// إشعار تاني، بنفس منطق NotificationRepository.create في الـ Flutter.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -46,6 +50,11 @@ Deno.serve(async (req) => {
         username: resolvedBy,
         details: `تم رفض طلب: ${approval.approval_type}`,
       });
+      await notifyIfEnabled(
+        supabase,
+        "approval_resolved",
+        `${resolvedBy} رفض طلب ${approval.approval_type} (طلبه: ${approval.requested_by})`,
+      );
       return jsonResponse({ success: true }, 200);
     }
 
@@ -85,12 +94,35 @@ Deno.serve(async (req) => {
       details: `تمت الموافقة على طلب: ${approval.approval_type} (طلبه: ${approval.requested_by})`,
     });
 
+    await notifyIfEnabled(
+      supabase,
+      "approval_resolved",
+      `${resolvedBy} وافق على طلب ${approval.approval_type} (طلبه: ${approval.requested_by})`,
+    );
+
     return jsonResponse({ success: true }, 200);
   } catch (e) {
     console.error(e);
     return jsonResponse({ success: false, error: `خطأ في الخادم: ${e}` }, 500);
   }
 });
+
+/// يسجّل إشعار جديد، لكن بيتجاهل بصمت لو النوع ده موقوف من الإعدادات —
+/// نفس منطق NotificationRepository.create في الـ Flutter.
+// deno-lint-ignore no-explicit-any
+async function notifyIfEnabled(supabase: any, notifType: string, message: string) {
+  try {
+    const { data: setting } = await supabase
+      .from("notification_settings")
+      .select("enabled")
+      .eq("notif_type", notifType)
+      .maybeSingle();
+    if (setting && setting.enabled === false) return;
+    await supabase.from("admin_notifications").insert({ notif_type: notifType, message });
+  } catch (e) {
+    console.error("notifyIfEnabled failed:", e);
+  }
+}
 
 function jsonResponse(body: unknown, status: number) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
