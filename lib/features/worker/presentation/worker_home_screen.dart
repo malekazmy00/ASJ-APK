@@ -250,7 +250,7 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
   Widget build(BuildContext context) {
     final isEquipment = _mode == _EntryMode.equipment;
     final hasPartNumber = _mode == _EntryMode.withPartNumber;
-    final showAnalysis = !isEquipment; // التحليل بالذكاء الاصطناعي متاح لمسارَي القطع بس
+    final showAnalysis = !isEquipment; // البحث بالذكاء الاصطناعي متاح لمسارَي القطع بس
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -398,7 +398,7 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : const Icon(Icons.auto_awesome),
-                  label: Text(_isAnalyzing ? 'جارٍ التحليل...' : 'تحليل بالذكاء الاصطناعي'),
+                  label: Text(_isAnalyzing ? 'جارٍ التحليل...' : 'بحث'),
                 ),
               ],
             ],
