@@ -149,7 +149,7 @@ class InventoryRepository {
       final kb = hasPartNumber ? kbByPartNumber[pn] : null;
       final displayName = (kb?['Part_Model'] as String?) ??
           (hasPartNumber
-              ? pn!
+              ? pn
               : ((desc == null || desc.isEmpty) ? 'غير محدد' : desc));
 
       final g = groups.putIfAbsent(
