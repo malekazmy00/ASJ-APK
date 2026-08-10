@@ -16,7 +16,7 @@ import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
-import '../../../core/widgets/barcode_scanner_page.dart';
+import '../../../core/widgets/autocomplete_search_field.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../inventory_summary/presentation/inventory_group_items_screen.dart';
 
@@ -221,39 +221,35 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
       padding: const EdgeInsets.all(16),
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: TextField(
+              child: AutocompleteSearchField(
                 controller: _searchController,
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  hintText: 'ابحث برقم القطعة أو النوع...',
-                  prefixIcon: Icon(Icons.search),
-                ),
-                onSubmitted: (_) => _search(),
+                hintText: 'ابحث برقم القطعة أو النوع...',
+                fetchSuggestions: (q) => _inventoryRepo.getSuggestions(q),
+                onSelected: (text) {
+                  _searchController.text = text;
+                  _search();
+                },
+                onBarcodeScanned: (code) async {
+                  _searchController.text = code;
+                  await _search();
+                },
               ),
             ),
             const SizedBox(width: 8),
-            IconButton.outlined(
-              icon: const Icon(Icons.qr_code_scanner),
-              tooltip: 'مسح باركود',
-              onPressed: () async {
-                final code = await scanBarcode(context);
-                if (code != null && code.isNotEmpty) {
-                  _searchController.text = code;
-                  _search();
-                }
-              },
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: _isSearching ? null : _search,
-              child: _isSearching
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('بحث'),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: ElevatedButton(
+                onPressed: _isSearching ? null : _search,
+                child: _isSearching
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('بحث'),
+              ),
             ),
           ],
         ),
@@ -520,7 +516,9 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
     await _inventoryRepo.deletePermanently(item.itemId!);
     _load();
   }
-Widget build(BuildContext context) {
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       children: [
         Padding(
@@ -610,7 +608,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
-  final _notificationRepo = NotificationRepository();
+final _notificationRepo = NotificationRepository();
   final _picker = ImagePicker();
 
   bool _loading = true;
