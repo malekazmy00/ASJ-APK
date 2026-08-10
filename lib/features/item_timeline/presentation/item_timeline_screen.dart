@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../core/models/transaction_log.dart';
+import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/log_repository.dart';
+import '../../../core/widgets/autocomplete_search_field.dart';
 import '../../../core/widgets/timeline_widget.dart';
 
-/// تتبع القطعة: تكتب رقم القطعة، تجيب كل حركاتها من entry لحد الآن
-/// (نفس الطلب الأصلي بالظبط) — كتبويب عادي.
+/// تتبع القطعة: تبحث برقم القطعة (بحث Autocomplete — نقطة ١٥+١٨)،
+/// تجيب كل حركاتها من entry لحد الآن — كتبويب عادي.
 ///
 /// الجولة الثالثة (نقطة ٢): تدعم كمان فتح مباشر على قطعة بعينها من
 /// صفحة تفاصيل القطعة (زرار "تتبع") — [initialPartNumber] بيعبّي
@@ -22,7 +24,8 @@ class ItemTimelineScreen extends StatefulWidget {
 }
 
 class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
-  final _repo = LogRepository();
+  final _logRepo = LogRepository();
+  final _inventoryRepo = InventoryRepository();
   final _controller = TextEditingController();
   List<TransactionLog> _logs = [];
   bool _loading = false;
@@ -36,20 +39,22 @@ class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
         widget.initialPartNumber != 'PENDING';
     if (hasPartNumber) {
       _controller.text = widget.initialPartNumber!;
-      _search();
+      _searchWithText(widget.initialPartNumber!);
     } else if (widget.initialItemId != null) {
       _searchByItemId(widget.initialItemId!);
     }
   }
 
-  Future<void> _search() async {
-    final partNumber = _controller.text.trim();
-    if (partNumber.isEmpty) return;
+  /// البحث الفعلي بيحصل بس لما يتم اختيار رقم من قايمة الاقتراحات (أو
+  /// مسح باركود) — مش أثناء الكتابة نفسها (راجع AutocompleteSearchField).
+  Future<void> _searchWithText(String partNumber) async {
+    final trimmed = partNumber.trim();
+    if (trimmed.isEmpty) return;
     setState(() {
       _loading = true;
       _searched = true;
     });
-    final logs = await _repo.getByPartNumber(partNumber);
+    final logs = await _logRepo.getByPartNumber(trimmed);
     if (mounted) {
       setState(() {
         _logs = logs;
@@ -65,7 +70,7 @@ class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
       _loading = true;
       _searched = true;
     });
-    final logs = await _repo.getByItem(itemId);
+    final logs = await _logRepo.getByItem(itemId);
     if (mounted) {
       setState(() {
         _logs = logs;
@@ -87,25 +92,12 @@ class _ItemTimelineScreenState extends State<ItemTimelineScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(
-                    hintText: 'رقم القطعة',
-                    prefixIcon: Icon(Icons.qr_code),
-                  ),
-                  onSubmitted: (_) => _search(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _loading ? null : _search,
-                child: const Text('بحث'),
-              ),
-            ],
+          AutocompleteSearchField(
+            controller: _controller,
+            hintText: 'رقم القطعة أو الاسم الكودي',
+            fetchSuggestions: (q) => _inventoryRepo.getSuggestions(q),
+            onSelected: _searchWithText,
+            onBarcodeScanned: _searchWithText,
           ),
           const SizedBox(height: 16),
           if (_loading) const LinearProgressIndicator(),
