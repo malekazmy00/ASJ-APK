@@ -173,8 +173,10 @@ class InventoryRepository {
   /// الصرف: بيع/إعارة/تلف — يفعل مع dispatched بس، ومصدره
   /// transactions_log مش inventory_items فمحتاج خطوة جلب إضافية).
   /// [sortField]: 'total_count' (افتراضي) أو 'part_number' أو
-  /// 'item_id' أو 'item_type'. القيم الافتراضية (من غير أي بارامتر)
-  /// بترجع نفس السلوك القديم بالظبط، عشان الشاشات التانية اللي بتنادي
+  /// 'item_id' أو 'item_type' أو 'created_at' (تاريخ إضافة أقدم قطعة
+  /// في المجموعة) أو 'updated_at' (تاريخ آخر حركة لأحدث قطعة في
+  /// المجموعة). القيم الافتراضية (من غير أي بارامتر) بترجع نفس
+  /// السلوك القديم بالظبط، عشان الشاشات التانية اللي بتنادي
   /// getGroupedInventory() من غير فلاتر (Batch B) تفضل شغالة زي ما هي.
   Future<List<Map<String, dynamic>>> getGroupedInventory({
     String? presence,
@@ -241,6 +243,8 @@ class InventoryRepository {
       final hasPartNumber = pn != null && pn.isNotEmpty && pn != 'PENDING';
       final key = _groupKeyFor(item);
       final itemId = item['item_id'] as int?;
+      final createdAt = DateTime.tryParse(item['created_at']?.toString() ?? '');
+      final updatedAt = DateTime.tryParse(item['updated_at']?.toString() ?? '');
 
       final kb = hasPartNumber ? kbByPartNumber[pn] : null;
       final displayName = (kb?['Part_Model'] as String?) ??
@@ -259,6 +263,8 @@ class InventoryRepository {
                 'total_count': 0,
                 'available_count': 0,
                 'min_item_id': itemId,
+                'min_created_at': createdAt,
+                'max_updated_at': updatedAt,
               });
       g['total_count'] = (g['total_count'] as int) + 1;
       if (item['status'] == 'Available') {
@@ -268,9 +274,22 @@ class InventoryRepository {
           (g['min_item_id'] == null || itemId < (g['min_item_id'] as int))) {
         g['min_item_id'] = itemId;
       }
+      if (createdAt != null) {
+        final current = g['min_created_at'] as DateTime?;
+        if (current == null || createdAt.isBefore(current)) {
+          g['min_created_at'] = createdAt;
+        }
+      }
+      if (updatedAt != null) {
+        final current = g['max_updated_at'] as DateTime?;
+        if (current == null || updatedAt.isAfter(current)) {
+          g['max_updated_at'] = updatedAt;
+        }
+      }
     }
 
     final result = groups.values.toList();
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
     int cmp(Map<String, dynamic> a, Map<String, dynamic> b) {
       switch (sortField) {
         case 'part_number':
@@ -282,12 +301,87 @@ class InventoryRepository {
         case 'item_type':
           return (a['item_type'] as String? ?? '')
               .compareTo(b['item_type'] as String? ?? '');
+        case 'created_at':
+          return ((a['min_created_at'] as DateTime?) ?? epoch)
+              .compareTo((b['min_created_at'] as DateTime?) ?? epoch);
+        case 'updated_at':
+          return ((a['max_updated_at'] as DateTime?) ?? epoch)
+              .compareTo((b['max_updated_at'] as DateTime?) ?? epoch);
         default:
           return (a['total_count'] as int).compareTo(b['total_count'] as int);
       }
     }
 
     result.sort((a, b) => ascending ? cmp(a, b) : cmp(b, a));
+    return result;
+  }
+
+  /// نفس فلاتر getGroupedInventory بالظبط، لكن من غير تجميع — كل قطعة
+  /// فعلية بصف/بطاقة مستقلة ليها (الجولة الثالثة، إضافة على نقطة ١٩:
+  /// خيار عرض "فردية" بدل "مجمّعة"). نفس أسماء sortField المدعومة في
+  /// getGroupedInventory بالظبط (ماعدا 'total_count' اللي معناهاش حاجة
+  /// هنا، بيتعامل زي 'item_id').
+  Future<List<InventoryItem>> getFilteredIndividual({
+    String? presence,
+    String? ownershipStatus,
+    String? entryType,
+    String? exitType,
+    String sortField = 'item_id',
+    bool ascending = false,
+  }) async {
+    var q = _client.from('inventory_items').select();
+    if (presence == 'available') {
+      q = q.neq('status', 'Out');
+      if (ownershipStatus != null) q = q.eq('ownership_status', ownershipStatus);
+    } else if (presence == 'dispatched') {
+      q = q.eq('status', 'Out');
+    }
+    if (entryType != null) q = q.eq('entry_type', entryType);
+
+    final itemRows = await q;
+    var items = (itemRows as List).cast<Map<String, dynamic>>();
+
+    if (presence == 'dispatched' && exitType != null && items.isNotEmpty) {
+      final itemIds = items.map((r) => r['item_id'] as int).toList();
+      final logRows = await _client
+          .from('transactions_log')
+          .select('item_id, exit_type')
+          .eq('action_type', 'OUT')
+          .inFilter('item_id', itemIds)
+          .order('timestamp', ascending: false);
+      final exitTypeByItem = <int, String?>{};
+      for (final r in logRows as List) {
+        final id = r['item_id'] as int;
+        exitTypeByItem.putIfAbsent(id, () => r['exit_type'] as String?);
+      }
+      items = items
+          .where((item) => exitTypeByItem[item['item_id'] as int] == exitType)
+          .toList();
+    }
+
+    final result = items.map((r) => InventoryItem.fromMap(r)).toList();
+    result.sort((a, b) {
+      int c;
+      switch (sortField) {
+        case 'part_number':
+          c = a.partNumber.compareTo(b.partNumber);
+          break;
+        case 'item_type':
+          c = a.itemType.compareTo(b.itemType);
+          break;
+        case 'created_at':
+          c = (a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0));
+          break;
+        case 'updated_at':
+          c = (a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0));
+          break;
+        default: // item_id
+          c = (a.itemId ?? 0).compareTo(b.itemId ?? 0);
+      }
+      return ascending ? c : -c;
+    });
     return result;
   }
 
