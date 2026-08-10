@@ -115,12 +115,107 @@ class InventoryRepository {
     return 'desc:${(desc == null || desc.isEmpty) ? 'غير محدد' : desc}';
   }
 
+  /// اقتراحات نصية خفيفة لخانة البحث بشكل Autocomplete (الجولة الثالثة،
+  /// نقطة ١٥+١٨): بترجع نصوص عرض بس (رقم قطعة/موديل/وصف) بتتطابق جزئياً
+  /// مع النص، مش القطع نفسها — الشاشة اللي بتستخدمها هي اللي بتقرر
+  /// تعمل ايه لما المستخدم يختار من القايمة (البحث الفعلي بيحصل وقتها
+  /// بس، مش أثناء الكتابة).
+  Future<List<String>> getSuggestions(String query, {int limit = 8}) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return [];
+    final results = <String>{};
+
+    final itemRows = await _client
+        .from('inventory_items')
+        .select('part_number, description')
+        .or('part_number.ilike.%$trimmed%,description.ilike.%$trimmed%')
+        .limit(limit * 3);
+    for (final r in itemRows as List) {
+      if (results.length >= limit) break;
+      final pn = r['part_number'] as String?;
+      final desc = r['description'] as String?;
+      if (pn != null &&
+          pn.isNotEmpty &&
+          pn != 'PENDING' &&
+          pn.toLowerCase().contains(trimmed.toLowerCase())) {
+        results.add(pn);
+      } else if (desc != null &&
+          desc.isNotEmpty &&
+          desc.toLowerCase().contains(trimmed.toLowerCase())) {
+        results.add(desc);
+      }
+    }
+
+    if (results.length < limit) {
+      final kbRows = await _client
+          .from('specs_knowledge_base')
+          .select('Part_Model')
+          .ilike('Part_Model', '%$trimmed%')
+          .limit(limit);
+      for (final r in kbRows as List) {
+        if (results.length >= limit) break;
+        final model = r['Part_Model'] as String?;
+        if (model != null && model.isNotEmpty) results.add(model);
+      }
+    }
+
+    return results.take(limit).toList();
+  }
+
   /// كل بطاقات المجموعات (لتبويب المخزون وجزء التوفر في تبويب البحث).
   /// كل عنصر في الرجعة: group_key, display_name, item_type, brand,
   /// has_part_number, total_count, available_count.
-  Future<List<Map<String, dynamic>>> getGroupedInventory() async {
-    final itemRows = await _client.from('inventory_items').select();
-    final items = (itemRows as List).cast<Map<String, dynamic>>();
+  ///
+  /// الجولة الثالثة (نقطة ١٩): بارامترات الفلترة/الترتيب الاختيارية —
+  /// [presence] ('available' القطع الموجودة في المخزن / 'dispatched'
+  /// المنصرفة / null الكل)، [ownershipStatus] (يفعل مع available بس)،
+  /// [entryType] (برقم قطعة/معدة شغل/بدون رقم)، [exitType] (سبب
+  /// الصرف: بيع/إعارة/تلف — يفعل مع dispatched بس، ومصدره
+  /// transactions_log مش inventory_items فمحتاج خطوة جلب إضافية).
+  /// [sortField]: 'total_count' (افتراضي) أو 'part_number' أو
+  /// 'item_id' أو 'item_type'. القيم الافتراضية (من غير أي بارامتر)
+  /// بترجع نفس السلوك القديم بالظبط، عشان الشاشات التانية اللي بتنادي
+  /// getGroupedInventory() من غير فلاتر (Batch B) تفضل شغالة زي ما هي.
+  Future<List<Map<String, dynamic>>> getGroupedInventory({
+    String? presence,
+    String? ownershipStatus,
+    String? entryType,
+    String? exitType,
+    String sortField = 'total_count',
+    bool ascending = false,
+  }) async {
+    var q = _client.from('inventory_items').select();
+    if (presence == 'available') {
+      q = q.neq('status', 'Out');
+      if (ownershipStatus != null) q = q.eq('ownership_status', ownershipStatus);
+    } else if (presence == 'dispatched') {
+      q = q.eq('status', 'Out');
+    }
+    if (entryType != null) q = q.eq('entry_type', entryType);
+
+    final itemRows = await q;
+    var items = (itemRows as List).cast<Map<String, dynamic>>();
+
+    // سبب الصرف مخزّن في transactions_log مش في inventory_items، فلو
+    // مطلوب فلترة بيه لازم نجيب آخر حركة "صرف" لكل قطعة صادرة الأول.
+    if (presence == 'dispatched' && exitType != null && items.isNotEmpty) {
+      final itemIds = items.map((r) => r['item_id'] as int).toList();
+      final logRows = await _client
+          .from('transactions_log')
+          .select('item_id, exit_type')
+          .eq('action_type', 'OUT')
+          .inFilter('item_id', itemIds)
+          .order('timestamp', ascending: false);
+      final exitTypeByItem = <int, String?>{};
+      for (final r in logRows as List) {
+        final id = r['item_id'] as int;
+        // مرتبين تنازلي بالوقت، فأول ظهور لكل item_id هو آخر حركة صرف ليها
+        exitTypeByItem.putIfAbsent(id, () => r['exit_type'] as String?);
+      }
+      items = items
+          .where((item) => exitTypeByItem[item['item_id'] as int] == exitType)
+          .toList();
+    }
 
     final partNumbers = items
         .map((r) => r['part_number'] as String?)
@@ -145,6 +240,7 @@ class InventoryRepository {
       final desc = (item['description'] as String?)?.trim();
       final hasPartNumber = pn != null && pn.isNotEmpty && pn != 'PENDING';
       final key = _groupKeyFor(item);
+      final itemId = item['item_id'] as int?;
 
       final kb = hasPartNumber ? kbByPartNumber[pn] : null;
       final displayName = (kb?['Part_Model'] as String?) ??
@@ -162,16 +258,36 @@ class InventoryRepository {
                 'has_part_number': hasPartNumber,
                 'total_count': 0,
                 'available_count': 0,
+                'min_item_id': itemId,
               });
       g['total_count'] = (g['total_count'] as int) + 1;
       if (item['status'] == 'Available') {
         g['available_count'] = (g['available_count'] as int) + 1;
       }
+      if (itemId != null &&
+          (g['min_item_id'] == null || itemId < (g['min_item_id'] as int))) {
+        g['min_item_id'] = itemId;
+      }
     }
 
     final result = groups.values.toList();
-    result.sort(
-        (a, b) => (b['total_count'] as int).compareTo(a['total_count'] as int));
+    int cmp(Map<String, dynamic> a, Map<String, dynamic> b) {
+      switch (sortField) {
+        case 'part_number':
+          return (a['display_name'] as String)
+              .compareTo(b['display_name'] as String);
+        case 'item_id':
+          return ((a['min_item_id'] as int?) ?? 0)
+              .compareTo((b['min_item_id'] as int?) ?? 0);
+        case 'item_type':
+          return (a['item_type'] as String? ?? '')
+              .compareTo(b['item_type'] as String? ?? '');
+        default:
+          return (a['total_count'] as int).compareTo(b['total_count'] as int);
+      }
+    }
+
+    result.sort((a, b) => ascending ? cmp(a, b) : cmp(b, a));
     return result;
   }
 
