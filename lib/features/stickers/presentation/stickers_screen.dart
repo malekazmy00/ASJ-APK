@@ -6,18 +6,17 @@ import 'package:printing/printing.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
-import '../../../core/widgets/barcode_scanner_page.dart';
+import '../../../core/widgets/autocomplete_search_field.dart';
 
 /// معاينة استيكر القطعة (رقم القطعة + Serial لو موجود + كود QR).
-/// القائمة بتظهر مباشرة من غير ما تحتاج تبحث الأول (تصفح حر)، ولو
-/// كتبت رقم الـ ID بتاع القطعة بالظبط بتقفز لاستيكرها على طول.
+/// القائمة بتظهر مباشرة من غير ما تحتاج تبحث الأول (تصفح حر).
 ///
-/// الجولة الثالثة (نقطة ١٤ — الطباعة): بدل ما نربط بطابعة معينة
-/// (محتاج نعرف الموديل بالظبط)، بنستخدم نافذة الطباعة القياسية في
-/// أندرويد نفسها (نفس اللي أي تطبيق بيستخدمها) — بتتعرف تلقائياً على
-/// أي طابعة متصلة بالموبايل (بلوتوث/شبكة) طالما مثبّت لها تطبيق
-/// تعريف (print service)، ومن جواها كمان تقدر "احفظ كـ PDF" لو مفيش
-/// طابعة متصلة دلوقتي.
+/// الجولة الثالثة (نقطة ١٥+١٨): بحث Autocomplete (اقتراحات بس أثناء
+/// الكتابة، البحث الفعلي بعد الاختيار أو مسح الباركود) بدل البحث
+/// الفوري على كل حرف.
+///
+/// نقطة ١٤ (الطباعة): بدل ما نربط بطابعة معينة، بنستخدم نافذة الطباعة
+/// القياسية في أندرويد نفسها — بتتعرف تلقائياً على أي طابعة متصلة.
 class StickersScreen extends StatefulWidget {
   const StickersScreen({super.key});
 
@@ -31,6 +30,7 @@ class _StickersScreenState extends State<StickersScreen> {
   List<InventoryItem> _results = [];
   InventoryItem? _selected;
   bool _loading = true;
+  bool _hasActiveSearch = false;
 
   @override
   void initState() {
@@ -39,7 +39,11 @@ class _StickersScreenState extends State<StickersScreen> {
   }
 
   Future<void> _loadAll() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _hasActiveSearch = false;
+      _selected = null;
+    });
     final items = await _repo.getAll();
     if (mounted) {
       setState(() {
@@ -49,10 +53,11 @@ class _StickersScreenState extends State<StickersScreen> {
     }
   }
 
-  Future<void> _search() async {
-    final q = _controller.text.trim();
+  /// البحث الفعلي بيحصل بس لما يتم اختيار اقتراح أو مسح باركود — مش
+  /// أثناء الكتابة نفسها (راجع AutocompleteSearchField).
+  Future<void> _searchWithText(String text) async {
+    final q = text.trim();
     if (q.isEmpty) {
-      setState(() => _selected = null);
       await _loadAll();
       return;
     }
@@ -60,6 +65,7 @@ class _StickersScreenState extends State<StickersScreen> {
     setState(() {
       _loading = true;
       _selected = null;
+      _hasActiveSearch = true;
     });
 
     // لو الإدخال رقم صافي، دور بالـ ID مباشرة وقفز لاستيكرها على طول
@@ -97,35 +103,32 @@ class _StickersScreenState extends State<StickersScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  textAlign: TextAlign.right,
-                  decoration: InputDecoration(
-                    hintText: 'دوّر برقم القطعة أو الـ ID (اختياري)...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.qr_code_scanner),
-                      tooltip: 'مسح باركود',
-                      onPressed: () async {
-                        final code = await scanBarcode(context);
-                        if (code != null && code.isNotEmpty) {
-                          _controller.text = code;
-                          _search();
-                        }
-                      },
-                    ),
-                  ),
-                  onSubmitted: (_) => _search(),
-                  onChanged: (_) => _search(),
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: AutocompleteSearchField(
+            controller: _controller,
+            hintText: 'دوّر برقم القطعة أو الـ ID (اختياري)...',
+            fetchSuggestions: (q) => _repo.getSuggestions(q),
+            onSelected: _searchWithText,
+            onBarcodeScanned: _searchWithText,
           ),
         ),
+        if (_hasActiveSearch)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                ActionChip(
+                  label: const Text('عرض الكل'),
+                  avatar: const Icon(Icons.close, size: 16),
+                  onPressed: () {
+                    _controller.clear();
+                    _loadAll();
+                  },
+                ),
+              ],
+            ),
+          ),
         if (_loading) const LinearProgressIndicator(),
         if (_selected != null)
           Expanded(
@@ -150,7 +153,7 @@ class _StickersScreenState extends State<StickersScreen> {
         else
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               itemCount: _results.length,
               itemBuilder: (context, index) {
                 final item = _results[index];
