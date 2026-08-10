@@ -9,6 +9,7 @@ import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/models/app_user.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../item_timeline/presentation/item_timeline_screen.dart';
 
@@ -66,6 +67,23 @@ class _InventoryItemDetailScreenState
   }
 
   String get _username => ref.read(authControllerProvider)?.username ?? 'unknown';
+
+  /// الجولة الثالثة (نقطة ٢٤ — إصلاح ثغرة صلاحيات): الأدمن مفتوح له كل
+  /// حاجة دايماً (زي باقي التطبيق)، وأي حد تاني لازم يكون عنده
+  /// canEdit/canTrack صراحة — نفس الصلاحية اللي بتتحكم في ظهور تبويبَي
+  /// "لوحة التعديل"/"تتبع قطعة" المستقلين، عشان محدش يقدر يعدّل أو
+  /// يتتبع من هنا لو الصلاحية دي مقفولة له. الصرف/الاسترجاع مقصود
+  /// يفضلوا مرتبطين بالوصول لتبويب المخزون نفسه بس، من غير صلاحية
+  /// مستقلة، بقرار من مالك.
+  bool get _canEdit {
+    final user = ref.read(authControllerProvider);
+    return user?.role == UserRole.admin || (user?.canEdit ?? false);
+  }
+
+  bool get _canTrack {
+    final user = ref.read(authControllerProvider);
+    return user?.role == UserRole.admin || (user?.canTrack ?? false);
+  }
 
   Future<void> _dispatch() async {
     final result = await showDialog<_DispatchResult>(
@@ -330,9 +348,9 @@ class _InventoryItemDetailScreenState
                     _row('النوع', _item.itemType),
                     _row('رقم القطعة',
                         _item.partNumber == 'PENDING' ? 'بدون رقم' : _item.partNumber,
-                        onEdit: () => _requestSensitiveEdit(isPartNumber: true)),
+                        onEdit: _canEdit ? () => _requestSensitiveEdit(isPartNumber: true) : null),
                     _row('الرقم التسلسلي', _item.serialNumber ?? '—',
-                        onEdit: () => _requestSensitiveEdit(isPartNumber: false)),
+                        onEdit: _canEdit ? () => _requestSensitiveEdit(isPartNumber: false) : null),
                     if (_kb?.partModel != null) _row('الموديل (اسم كودي)', _kb!.partModel!),
                     if (_kb?.brand != null) _row('البراند', _kb!.brand!),
                     if (_kb?.compatibleModel != null)
@@ -368,12 +386,12 @@ class _InventoryItemDetailScreenState
                     label: const Text('استرجاع للمخزون'),
                   ),
                 OutlinedButton.icon(
-                  onPressed: _openTimeline,
+                  onPressed: _canTrack ? _openTimeline : null,
                   icon: const Icon(Icons.timeline_outlined),
                   label: const Text('تتبع'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: _editBasicFields,
+                  onPressed: _canEdit ? _editBasicFields : null,
                   icon: const Icon(Icons.edit_outlined),
                   label: const Text('تعديل البيانات'),
                 ),
