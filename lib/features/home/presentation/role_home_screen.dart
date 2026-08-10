@@ -100,7 +100,7 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
     // -- تبويبات المهندس --
     _NavTab(
       id: 'search',
-      label: 'بحث وصرف',
+      label: 'بحث',
       icon: Icons.search,
       requiredRole: UserRole.engineer,
       builder: () => const SmartSearchTab(),
@@ -205,8 +205,19 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
   /// في TabBarView بس مش في القايمة القابلة للتمرير/التخصيص فوق.
   static const int _fixedTabIndex = 0;
 
-  late final TabController _tabController =
-      TabController(length: _tabs.length + 1, vsync: this);
+  /// الجولة الثالثة (نقطة ٢٠): "حسابي" فاضل مكانه ثابت (أول حاجة في
+  /// الشريط)، لكن التطبيق مش بيفتح عليه افتراضياً — بيفتح على "تسجيل
+  /// قطعة" (أول تبويب في _tabs) بدل كده. تسجيل قطعة متاح لأي حساب
+  /// افتراضياً (النظام هرمي)، فده آمن كافتراضي؛ لو الأدمن قفله تحديداً
+  /// لحساب معين، هنكتشف ده بعد ما الـ overrides تتحمّل ونقفز لأول
+  /// تبويب متاح فعلاً بدل ما نسيبه على تبويب مقفول (راجع _loadOverrides).
+  static const int _entryTabControllerIndex = 1; // _tabs[0] ('entry') + 1
+
+  late final TabController _tabController = TabController(
+    length: _tabs.length + 1,
+    vsync: this,
+    initialIndex: _entryTabControllerIndex,
+  );
   final _userRepo = UserRepository();
   Map<String, bool> _overrides = {};
 
@@ -217,10 +228,23 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
   }
 
   Future<void> _loadOverrides() async {
-    final username = ref.read(authControllerProvider)?.username;
+    final user = ref.read(authControllerProvider);
+    final username = user?.username;
     if (username == null) return;
     final overrides = await _userRepo.getTabOverrides(username);
-    if (mounted) setState(() => _overrides = overrides);
+    if (!mounted) return;
+    setState(() => _overrides = overrides);
+
+    // لو تسجيل قطعة اتقفل تحديداً لهذا الحساب (حالة نادرة)، وكنا لسه
+    // قاعدين عليه افتراضياً (المستخدم ماتنقلش بنفسه)، اقفز لأول تبويب
+    // متاح فعلاً بدل ما نسيبه على تبويب مقفول.
+    if (_tabController.index == _entryTabControllerIndex &&
+        !_tabs[0].isUnlocked(user, _overrides)) {
+      final fallbackIndex = _tabs.indexWhere((t) => t.isUnlocked(user, _overrides));
+      if (fallbackIndex != -1) {
+        _tabController.animateTo(fallbackIndex + 1);
+      }
+    }
   }
 
   @override
