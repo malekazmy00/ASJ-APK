@@ -205,13 +205,13 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
   /// في TabBarView بس مش في القايمة القابلة للتمرير/التخصيص فوق.
   static const int _fixedTabIndex = 0;
 
-  /// الجولة الثالثة (نقطة ٢٠): "حسابي" فاضل مكانه ثابت (أول حاجة في
-  /// الشريط)، لكن التطبيق مش بيفتح عليه افتراضياً — بيفتح على "تسجيل
-  /// قطعة" (أول تبويب في _tabs) بدل كده. تسجيل قطعة متاح لأي حساب
-  /// افتراضياً (النظام هرمي)، فده آمن كافتراضي؛ لو الأدمن قفله تحديداً
-  /// لحساب معين، هنكتشف ده بعد ما الـ overrides تتحمّل ونقفز لأول
-  /// تبويب متاح فعلاً بدل ما نسيبه على تبويب مقفول (راجع _loadOverrides).
-  static const int _entryTabControllerIndex = 1; // _tabs[0] ('entry') + 1
+  /// الجولة الثالثة (نقطة ٢٠ + ترتيب حسب الصلاحيات): "حسابي" فاضل
+  /// مكانه ثابت (أول حاجة في الشريط)، والتطبيق بيفتح افتراضياً على
+  /// أول تبويب مفتوح فعلاً لصلاحيات الحساب الحالي (غالباً "تسجيل
+  /// قطعة" لأنه متاح للكل بحكم النظام الهرمي ودايماً أول عنصر في
+  /// _tabs) — بفضل _sortedTabs، الفهرس ده مضمون يبقى تبويب مفتوح
+  /// دايماً، حتى لو الصلاحيات اتغيّرت لاحقاً.
+  static const int _entryTabControllerIndex = 1;
 
   late final TabController _tabController = TabController(
     length: _tabs.length + 1,
@@ -227,23 +227,63 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
     _loadOverrides();
   }
 
+  /// الجولة الثالثة (نقطة "ترتيب حسب الصلاحيات"): بترجع التبويبات
+  /// مرتبة — المفتوحة لحساب المستخدم الحالي الأول ورا بعض بنفس ترتيبها
+  /// الأصلي، وبعدين المقفولة ورا بعض في الآخر بنفس ترتيبها الأصلي.
+  /// الترتيب ثابت لنفس الحساب طول ما صلاحياته زي ما هي، وبيتغيّر بس
+  /// وقت فتح التطبيق تاني لو الأدمن غيّر الصلاحيات. Dart's List.sort
+  /// مش مضمون إنه Stable، فبنعمل التقسيم يدوي بدل استخدامه.
+  List<_NavTab> _sortedTabs(AppUser? user) {
+    final unlocked = <_NavTab>[];
+    final locked = <_NavTab>[];
+    for (final t in _tabs) {
+      if (t.isUnlocked(user, _overrides)) {
+        unlocked.add(t);
+      } else {
+        locked.add(t);
+      }
+    }
+    return [...unlocked, ...locked];
+  }
+
   Future<void> _loadOverrides() async {
     final user = ref.read(authControllerProvider);
     final username = user?.username;
     if (username == null) return;
     final overrides = await _userRepo.getTabOverrides(username);
     if (!mounted) return;
+    // ملحوظة: مش محتاجين أي منطق قفز يدوي هنا بعد كده — طالما
+    // التبويبات المفتوحة دايماً بترتب الأول (_sortedTabs)، الفهرس ١
+    // (أول تبويب في الشريط بعد "حسابي" الثابت) هيبقى دايماً تبويب
+    // مفتوح فعلاً تلقائياً، حتى لو الأدمن قفل "تسجيل قطعة" تحديداً
+    // لهذا الحساب — هيبقى اتنقل لآخر القايمة والمفتوح اللي بعده هياخد
+    // مكانه في الفهرس ١ بمجرد إعادة البناء.
     setState(() => _overrides = overrides);
+  }
 
-    // لو تسجيل قطعة اتقفل تحديداً لهذا الحساب (حالة نادرة)، وكنا لسه
-    // قاعدين عليه افتراضياً (المستخدم ماتنقلش بنفسه)، اقفز لأول تبويب
-    // متاح فعلاً بدل ما نسيبه على تبويب مقفول.
-    if (_tabController.index == _entryTabControllerIndex &&
-        !_tabs[0].isUnlocked(user, _overrides)) {
-      final fallbackIndex = _tabs.indexWhere((t) => t.isUnlocked(user, _overrides));
-      if (fallbackIndex != -1) {
-        _tabController.animateTo(fallbackIndex + 1);
-      }
+  /// الجولة الثالثة (نقطة ٢٥): تأكيد قياسي قبل الخروج الفعلي — بدل ما
+  /// الزرار يسجّل خروج فوراً من غير أي تحذير.
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تسجيل الخروج'),
+        content: const Text('متأكد إنك عايز تسجّل خروج؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('تسجيل الخروج'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      ref.read(authControllerProvider.notifier).logout();
     }
   }
 
@@ -257,6 +297,11 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider);
     if (user == null) return const SizedBox.shrink();
+
+    // مرتبة: المفتوحة لصلاحيات الحساب ده الأول، والمقفولة في الآخر —
+    // بتتحسب مرة واحدة هنا وتُستخدم في الاتنين (المحتوى + الشريط)
+    // عشان الترتيب يفضل متطابق بينهم بالظبط.
+    final sortedTabs = _sortedTabs(user);
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -275,7 +320,7 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+            onPressed: _confirmLogout,
           ),
         ],
         bottom: const PreferredSize(
@@ -289,7 +334,7 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
           // تبويب "حسابي" الثابت — دايماً في الفهرس صفر، مش متأثر
           // بـ overrides ولا بترتيب باقي التبويبات.
           const MyAccountScreen(),
-          ..._tabs.map((t) => t.isUnlocked(user, _overrides)
+          ...sortedTabs.map((t) => t.isUnlocked(user, _overrides)
               ? t.builder()
               : const LockedFeaturePlaceholder()),
         ],
@@ -328,10 +373,10 @@ class _RoleHomeScreenState extends ConsumerState<RoleHomeScreen>
                     Expanded(
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
-                        itemCount: _tabs.length,
+                        itemCount: sortedTabs.length,
                         separatorBuilder: (context, index) => const SizedBox(width: 6),
                         itemBuilder: (context, index) {
-                          final tab = _tabs[index];
+                          final tab = sortedTabs[index];
                           final unlocked = tab.isUnlocked(user, _overrides);
                           // +1 عشان تبويب "حسابي" الثابت ماخد الفهرس صفر
                           final controllerIndex = index + 1;
