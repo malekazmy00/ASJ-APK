@@ -526,11 +526,18 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
+                child: AutocompleteSearchField(
                   controller: _filterController,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(labelText: 'فلترة برقم القطعة/الموقع'),
-                  onSubmitted: (_) => _load(),
+                  hintText: 'فلترة برقم القطعة/الموقع',
+                  fetchSuggestions: (q) => _inventoryRepo.getSuggestions(q),
+                  onSelected: (text) {
+                    _filterController.text = text;
+                    _load();
+                  },
+                  onBarcodeScanned: (code) async {
+                    _filterController.text = code;
+                    await _load();
+                  },
                 ),
               ),
               const SizedBox(width: 8),
@@ -588,7 +595,6 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
     );
   }
 }
-
 // ---------------------------------------------------------------------
 // شاشة تعديل قطعة كاملة: حقول المخزون + حقول قاعدة المعرفة المرتبطة
 // برقم القطعة مع بعض، بدل شاشتين منفصلتين.
@@ -608,7 +614,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
-final _notificationRepo = NotificationRepository();
+  final _notificationRepo = NotificationRepository();
   final _picker = ImagePicker();
 
   bool _loading = true;
