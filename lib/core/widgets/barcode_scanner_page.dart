@@ -6,14 +6,19 @@ import '../theme/app_theme.dart';
 /// يفتح شاشة سكانر باركود كاملة ويرجع أول قيمة يتم مسحها، أو null لو
 /// المستخدم رجع من غير ما يمسح حاجة.
 ///
-/// الجولة الثالثة (باج ١٣ — إصلاح جذري): السبب الحقيقي وراء
-/// `MobileScannerErrorCode.genericError` كان إن صلاحية الكاميرا ممكن
-/// متتضافش فعلياً جوه AndroidManifest.xml وقت البناء (السكريبت في
-/// codemagic.yaml كان بيحاول يضيفها من غير أي تحقق إنها اتضافت
-/// فعلاً — اتصلح هناك). هنا طبقة حماية تانية: نطلب صلاحية الكاميرا
-/// صراحة قبل ما نفتح الكاميرا خالص (مش نسيب mobile_scanner يطلبها
-/// لوحده)، مع زرار "إعادة المحاولة" لو فشلت بدل ما المستخدم يضطر
-/// يقفل الشاشة ويفتحها تاني.
+/// الجولة الثالثة (باج ١٣ — محاولة تانية بعد التأكد إن الصلاحية
+/// شغّالة): السكرين شوت أكّد إن صلاحية الكاميرا بتتوافق عليها تلقائي
+/// من غير مشكلة (مفيش نافذة صلاحية فشلت ولا زرار "فتح الإعدادات"
+/// ظهر) — يبقى `genericError` مش سببه الصلاحية خالص، والمشكلة في
+/// بدء تشغيل الكاميرا نفسها (CameraX).
+///
+/// حسب توثيق مكتبة mobile_scanner نفسها، نفس تصنيف الخطأ ده بيظهر
+/// كمان لما الـ controller يتحاول يبدأ (`start()`) مرتين في نفس
+/// الوقت — بيحصل غالباً لما `autoStart` التلقائي بيتعارض مع انتقال
+/// الشاشة نفسه. اتشال الاعتماد على autoStart، وبقى فيه بدء يدوي
+/// محكوم + إيقاف صريح قبل أي إعادة محاولة أو إغلاق للشاشة. كمان
+/// بقينا نطلع تفاصيل الخطأ الحقيقية (errorDetails) مش بس التصنيف
+/// العام، عشان لو استمرت المشكلة نعرف السبب الدقيق من الرسالة نفسها.
 Future<String?> scanBarcode(BuildContext context) {
   return Navigator.of(context).push<String>(
     MaterialPageRoute(builder: (context) => const _BarcodeScannerPage()),
@@ -30,39 +35,69 @@ class _BarcodeScannerPage extends StatefulWidget {
 class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
   MobileScannerController? _controller;
   bool _handled = false;
-  bool _checkingPermission = true;
-  String? _permissionError;
+  bool _busy = true;
+  bool _ready = false;
+  String? _errorText;
+  bool _canOpenSettings = false;
 
   @override
   void initState() {
     super.initState();
-    _requestPermissionAndInit();
+    _init();
   }
 
-  Future<void> _requestPermissionAndInit() async {
+  Future<void> _init() async {
     setState(() {
-      _checkingPermission = true;
-      _permissionError = null;
+      _busy = true;
+      _errorText = null;
+      _canOpenSettings = false;
+      _ready = false;
     });
 
-    final status = await Permission.camera.request();
+    // إيقاف أي كنترولر قديم قبل أي محاولة جديدة، عشان نضمن مفيش
+    // بدء تشغيل مزدوج (السبب الموثّق لنفس تصنيف الخطأ ده).
+    if (_controller != null) {
+      try {
+        await _controller!.stop();
+      } catch (_) {}
+      await _controller!.dispose();
+      _controller = null;
+    }
 
+    final status = await Permission.camera.request();
     if (!mounted) return;
 
-    if (status.isGranted) {
+    if (!status.isGranted) {
       setState(() {
-        _controller = MobileScannerController();
-        _checkingPermission = false;
+        _busy = false;
+        _canOpenSettings = status.isPermanentlyDenied;
+        _errorText = status.isPermanentlyDenied
+            ? 'إذن الكاميرا مرفوض بشكل دائم. افتح إعدادات التطبيق من الموبايل وفعّل صلاحية الكاميرا يدوياً.'
+            : 'محتاجين إذن الكاميرا عشان نقدر نمسح الباركود.';
       });
       return;
     }
 
-    setState(() {
-      _checkingPermission = false;
-      _permissionError = status.isPermanentlyDenied
-          ? 'إذن الكاميرا مرفوض بشكل دائم. افتح إعدادات التطبيق من الموبايل وفعّل صلاحية الكاميرا يدوياً.'
-          : 'محتاجين إذن الكاميرا عشان نقدر نمسح الباركود.';
-    });
+    final controller = MobileScannerController(autoStart: false);
+    try {
+      await controller.start();
+      if (!mounted) return;
+      setState(() {
+        _controller = controller;
+        _busy = false;
+        _ready = true;
+      });
+    } catch (e) {
+      await controller.dispose();
+      if (!mounted) return;
+      final detail = e is MobileScannerException
+          ? (e.errorDetails?.message ?? e.errorCode.toString())
+          : e.toString();
+      setState(() {
+        _busy = false;
+        _errorText = 'تعذر تشغيل الكاميرا:\n$detail';
+      });
+    }
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -73,19 +108,9 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
     Navigator.of(context).pop(value);
   }
 
-  String _errorMessage(MobileScannerException error) {
-    switch (error.errorCode) {
-      case MobileScannerErrorCode.permissionDenied:
-        return 'إذن الكاميرا مرفوض. افتح إعدادات التطبيق من الموبايل وفعّل صلاحية الكاميرا يدوياً.';
-      case MobileScannerErrorCode.unsupported:
-        return 'الجهاز ده مش بيدعم مسح الباركود.';
-      default:
-        return 'تعذر تشغيل الكاميرا (${error.errorCode}). دوس "إعادة المحاولة" تحت.';
-    }
-  }
-
   @override
   void dispose() {
+    _controller?.stop();
     _controller?.dispose();
     super.dispose();
   }
@@ -98,7 +123,7 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
         title: const Text('امسح الباركود'),
         backgroundColor: AppColors.primary,
         actions: [
-          if (_controller != null)
+          if (_ready && _controller != null)
             IconButton(
               icon: const Icon(Icons.flash_on),
               onPressed: () => _controller!.toggleTorch(),
@@ -107,27 +132,28 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
       ),
       body: Stack(
         children: [
-          if (_checkingPermission)
+          if (_busy)
             const Center(child: CircularProgressIndicator(color: Colors.white))
-          else if (_permissionError != null)
+          else if (_errorText != null)
             _ErrorRetryView(
-              message: _permissionError!,
-              onRetry: _requestPermissionAndInit,
-              onOpenSettings: openAppSettings,
+              message: _errorText!,
+              onRetry: _init,
+              onOpenSettings: _canOpenSettings ? openAppSettings : null,
             )
-          else
+          else if (_ready && _controller != null)
             MobileScanner(
               controller: _controller,
               onDetect: _onDetect,
               errorBuilder: (context, error, child) {
+                final detail = error.errorDetails?.message ?? error.errorCode.toString();
                 return _ErrorRetryView(
-                  message: _errorMessage(error),
-                  onRetry: _requestPermissionAndInit,
+                  message: 'تعذر تشغيل الكاميرا:\n$detail',
+                  onRetry: _init,
                   onOpenSettings: null,
                 );
               },
             ),
-          if (!_checkingPermission && _permissionError == null)
+          if (_ready && _errorText == null)
             Center(
               child: Container(
                 width: 240,
