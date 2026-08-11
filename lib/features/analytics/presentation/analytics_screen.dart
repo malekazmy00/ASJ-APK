@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/analytics_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
+import '../../auth/presentation/auth_providers.dart';
 
 /// شاشة تحليل بيانات المخزون.
 ///
@@ -10,16 +13,21 @@ import '../../../core/repositories/analytics_repository.dart';
 /// فيها جزئين — "الأساسيات" (مؤشرات جاهزة موسّعة) و"بناء تحليل حر"
 /// (زي PivotTable مصغّر: اختار عمود + نوع رسم بحرية). وإصلاح باج
 /// دايالوج اختيار المؤشرات (كان بيطفح من غير سكرول على الشاشات الصغيرة).
-class AnalyticsScreen extends StatefulWidget {
+/// نقطة ٢٧: أي مؤشر (بما فيه "بناء تحليل حر" نفسه) قابل للإخفاء
+/// لحساب معين من الأدمن — لو مخفي، مش بيظهر خالص حتى لو موجود في
+/// اختيارات المستخدم الشخصية (_visibleCharts).
+class AnalyticsScreen extends ConsumerStatefulWidget {
   const AnalyticsScreen({super.key});
 
   @override
-  State<AnalyticsScreen> createState() => _AnalyticsScreenState();
+  ConsumerState<AnalyticsScreen> createState() => _AnalyticsScreenState();
 }
 
-class _AnalyticsScreenState extends State<AnalyticsScreen> {
+class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   final _repo = AnalyticsRepository();
+  final _fieldRepo = FieldPermissionsRepository();
   bool _loading = true;
+  Map<String, bool> _fieldOverrides = {};
 
   int _totalItems = 0;
   int _dispatchedWeek = 0;
@@ -32,7 +40,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Map<String, int> _engineerLeaderboard = {};
 
   // Part A — الأساسيات (موسّعة عن الـ٥ الأصليين بإضافة أكتر القطع
-  // صرفاً وأداء المهندسين)
+  // صرفاً وأداء المهندسين). المفاتيح هنا نفسها field_key المستخدمة في
+  // FieldPermissionsRepository.tabFields['analytics'] — نفس التسمية
+  // بالظبط ما عدا 'stats' هنا اللي مقابلها 'stat_totals' هناك، وباقي
+  // المفاتيح متطابقة حرفياً.
   static const _chartLabels = {
     'stats': 'أرقام سريعة (إجمالي/أسبوع/شهر)',
     'status': 'توزيع حالة المخزون',
@@ -42,6 +53,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     'top_parts': 'أكتر القطع صرفاً (٣٠ يوم)',
     'engineer_leaderboard': 'أداء صرف المهندسين (٣٠ يوم)',
   };
+
+  /// يحوّل مفتاح شاشة الأساسيات المحلي (_chartLabels) لمفتاح جدول
+  /// الصلاحيات (FieldPermissionsRepository.tabFields['analytics']).
+  static const Map<String, String> _fieldKeyFor = {
+    'stats': 'stat_totals',
+    'status': 'status_chart',
+    'ownership': 'ownership_chart',
+    'exit_reason': 'exit_reason_chart',
+    'trend': 'trend_chart',
+    'top_parts': 'top_parts_chart',
+    'engineer_leaderboard': 'engineer_leaderboard_chart',
+  };
+
   Set<String> _visibleCharts = _chartLabels.keys.toSet();
 
   // Part B — بناء تحليل حر
@@ -53,6 +77,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Map<String, String> get _pivotColumnOptions => _pivotTable == 'inventory_items'
       ? AnalyticsRepository.pivotColumns
       : AnalyticsRepository.pivotLogColumns;
+
+  bool _fieldVisible(String fieldKey) =>
+      FieldPermissionsRepository.isVisible(_fieldOverrides, fieldKey);
+
+  /// نفس مؤشر _chartLabels لكن معدّي كمان من فلترة الأدمن.
+  bool _chartAllowed(String chartKey) => _fieldVisible(_fieldKeyFor[chartKey]!);
+
+  Future<void> _loadFieldOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _fieldRepo.getOverrides(username, 'analytics');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
 
   Future<void> _pickVisibleCharts() async {
     final selection = Set<String>.from(_visibleCharts);
@@ -73,7 +110,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: _chartLabels.entries.map((entry) {
+                  // نقطة ٢٧: المؤشرات اللي الأدمن مخفيها لهذا الحساب
+                  // مابتظهرش في القايمة دي خالص كخيار للمستخدم.
+                  children: _chartLabels.entries
+                      .where((entry) => _chartAllowed(entry.key))
+                      .map((entry) {
                     return CheckboxListTile(
                       value: selection.contains(entry.key),
                       title: Text(entry.value, textAlign: TextAlign.right),
@@ -110,6 +151,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadFieldOverrides();
   }
 
   Future<void> _load() async {
@@ -191,7 +233,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          if (_visibleCharts.contains('stats')) ...[
+          if (_visibleCharts.contains('stats') && _chartAllowed('stats')) ...[
             Row(
               children: [
                 Expanded(child: _StatCard(label: 'إجمالي القطع', value: '$_totalItems')),
@@ -204,7 +246,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 20),
           ],
 
-          if (_visibleCharts.contains('status')) ...[
+          if (_visibleCharts.contains('status') && _chartAllowed('status')) ...[
             _ChartCard(
               title: 'توزيع حالة المخزون',
               child: SfCircularChart(
@@ -223,7 +265,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('ownership')) ...[
+          if (_visibleCharts.contains('ownership') && _chartAllowed('ownership')) ...[
             _ChartCard(
               title: 'القطع الموجودة للصيانة/الأمانة الآن ($inCustodyCount)',
               child: SfCircularChart(
@@ -241,7 +283,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('exit_reason')) ...[
+          if (_visibleCharts.contains('exit_reason') && _chartAllowed('exit_reason')) ...[
             _ChartCard(
               title: 'توزيع الصرف حسب السبب — آخر 30 يوم',
               child: exitReasonData.isEmpty
@@ -267,7 +309,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('trend')) ...[
+          if (_visibleCharts.contains('trend') && _chartAllowed('trend')) ...[
             _ChartCard(
               title: 'اتجاه الصرف — آخر 30 يوم',
               child: SfCartesianChart(
@@ -291,7 +333,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('top_parts')) ...[
+          if (_visibleCharts.contains('top_parts') && _chartAllowed('top_parts')) ...[
             _ChartCard(
               title: 'أكتر القطع صرفاً — آخر 30 يوم',
               child: _topParts.isEmpty
@@ -316,7 +358,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 16),
           ],
 
-          if (_visibleCharts.contains('engineer_leaderboard'))
+          if (_visibleCharts.contains('engineer_leaderboard') && _chartAllowed('engineer_leaderboard'))
             _ChartCard(
               title: 'أداء صرف المهندسين — آخر 30 يوم',
               child: leaderboardData.isEmpty
@@ -348,80 +390,82 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               ),
             ),
 
-          const SizedBox(height: 28),
-          const Divider(),
-          const SizedBox(height: 12),
-          Text('بناء تحليل حر', textAlign: TextAlign.right, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          const Text(
-            'اختار أي عمود من بيانات المخزون أو حركات الصرف وشوف عدد كل قيمة — زي جدول محوري مصغّر.',
-            textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _pivotTable,
-                  decoration: const InputDecoration(labelText: 'مصدر البيانات'),
-                  items: const [
-                    DropdownMenuItem(value: 'inventory_items', child: Text('المخزون')),
-                    DropdownMenuItem(value: 'transactions_log', child: Text('حركات الصرف/السجل')),
-                  ],
-                  onChanged: (v) => setState(() {
-                    _pivotTable = v ?? _pivotTable;
-                    _pivotColumn = _pivotColumnOptions.keys.first;
-                    _pivotResult = null;
-                  }),
+          if (_fieldVisible('pivot_builder')) ...[
+            const SizedBox(height: 28),
+            const Divider(),
+            const SizedBox(height: 12),
+            Text('بناء تحليل حر', textAlign: TextAlign.right, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            const Text(
+              'اختار أي عمود من بيانات المخزون أو حركات الصرف وشوف عدد كل قيمة — زي جدول محوري مصغّر.',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _pivotTable,
+                    decoration: const InputDecoration(labelText: 'مصدر البيانات'),
+                    items: const [
+                      DropdownMenuItem(value: 'inventory_items', child: Text('المخزون')),
+                      DropdownMenuItem(value: 'transactions_log', child: Text('حركات الصرف/السجل')),
+                    ],
+                    onChanged: (v) => setState(() {
+                      _pivotTable = v ?? _pivotTable;
+                      _pivotColumn = _pivotColumnOptions.keys.first;
+                      _pivotResult = null;
+                    }),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _pivotColumn,
-                  decoration: const InputDecoration(labelText: 'العمود'),
-                  items: _pivotColumnOptions.entries
-                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: (v) => setState(() {
-                    _pivotColumn = v ?? _pivotColumn;
-                    _pivotResult = null;
-                  }),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _pivotColumn,
+                    decoration: const InputDecoration(labelText: 'العمود'),
+                    items: _pivotColumnOptions.entries
+                        .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _pivotColumn = v ?? _pivotColumn;
+                      _pivotResult = null;
+                    }),
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: _pivotLoading ? null : _buildPivot,
+              icon: _pivotLoading
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.bar_chart),
+              label: const Text('بناء التحليل'),
+            ),
+            if (_pivotResult != null) ...[
+              const SizedBox(height: 16),
+              _ChartCard(
+                title: 'النتيجة',
+                child: _pivotResult!.isEmpty
+                    ? const Center(
+                        child: Text('لا توجد بيانات', style: TextStyle(color: AppColors.textMuted)),
+                      )
+                    : SfCartesianChart(
+                        primaryXAxis: const CategoryAxis(),
+                        primaryYAxis: const NumericAxis(minimum: 0),
+                        series: <CartesianSeries>[
+                          BarSeries<MapEntry<String, int>, String>(
+                            dataSource: _pivotResult!.take(15).toList(),
+                            xValueMapper: (e, _) => e.key,
+                            yValueMapper: (e, _) => e.value,
+                            color: AppColors.primary,
+                            dataLabelSettings: const DataLabelSettings(isVisible: true),
+                          ),
+                        ],
+                      ),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: _pivotLoading ? null : _buildPivot,
-            icon: _pivotLoading
-                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.bar_chart),
-            label: const Text('بناء التحليل'),
-          ),
-          if (_pivotResult != null) ...[
-            const SizedBox(height: 16),
-            _ChartCard(
-              title: 'النتيجة',
-              child: _pivotResult!.isEmpty
-                  ? const Center(
-                      child: Text('لا توجد بيانات', style: TextStyle(color: AppColors.textMuted)),
-                    )
-                  : SfCartesianChart(
-                      primaryXAxis: const CategoryAxis(),
-                      primaryYAxis: const NumericAxis(minimum: 0),
-                      series: <CartesianSeries>[
-                        BarSeries<MapEntry<String, int>, String>(
-                          dataSource: _pivotResult!.take(15).toList(),
-                          xValueMapper: (e, _) => e.key,
-                          yValueMapper: (e, _) => e.value,
-                          color: AppColors.primary,
-                          dataLabelSettings: const DataLabelSettings(isVisible: true),
-                        ),
-                      ],
-                    ),
-            ),
           ],
         ],
       ),
