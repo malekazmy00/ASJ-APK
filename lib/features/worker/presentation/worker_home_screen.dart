@@ -11,6 +11,7 @@ import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../../core/widgets/barcode_scanner_page.dart';
 import '../../auth/presentation/auth_providers.dart';
 
@@ -49,6 +50,8 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
   final _knowledgeRepo = KnowledgeBaseRepository();
   final _logRepo = LogRepository();
   final _notifRepo = NotificationRepository();
+  final _fieldRepo = FieldPermissionsRepository();
+  Map<String, bool> _fieldOverrides = {};
 
   late final TextEditingController _partNumberField = TextEditingController();
   late final TextEditingController _partModelField = TextEditingController();
@@ -59,6 +62,23 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
   late final TextEditingController _additionalCompatField = TextEditingController();
   late final TextEditingController _marketValueField = TextEditingController();
   late final TextEditingController _notesField = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFieldOverrides();
+  }
+
+  /// الجولة الثالثة (نقطة ٢٧): إيه الحقول اللي الأدمن سمح بظهورها لهذا
+  /// الحساب في تبويب "تسجيل قطعة" — الافتراضي "ظاهر" لو مفيش تخصيص.
+  Future<void> _loadFieldOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _fieldRepo.getOverrides(username, 'entry');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
+
+  bool _fieldVisible(String key) => FieldPermissionsRepository.isVisible(_fieldOverrides, key);
 
   @override
   void dispose() {
@@ -137,6 +157,13 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         _additionalCompatField.text = result['Additional_Compatibility'] ?? '';
         _marketValueField.text = result['Market_Value'] ?? '';
         _notesField.text = result['Gemini_Insights'] ?? '';
+        // اختيار نوع القطعة تلقائي من التحليل (لو النموذج رجّع قيمة
+        // من نفس القايمة المتاحة في الـ dropdown) — العامل لسه يقدر
+        // يغيّرها يدوي لو مش دقيقة.
+        final suggestedType = result['Item_Type'] as String?;
+        if (suggestedType != null && defaultItemTypes.contains(suggestedType)) {
+          _itemType = suggestedType;
+        }
       });
     } catch (e) {
       _showSnack('خطأ في الاتصال بخدمة التحليل: $e', isError: true);
@@ -421,16 +448,24 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (hasPartNumber)
+                if (hasPartNumber && _fieldVisible('part_number'))
                   _EditableRow(label: 'رقم القطعة', controller: _partNumberField),
-                _EditableRow(label: 'الموديل (الاسم الكودي)', controller: _partModelField),
-                _EditableRow(label: 'الرقم التسلسلي (Serial)', controller: _serialField),
-                _EditableRow(label: 'الماركة', controller: _brandField),
-                _EditableRow(label: 'الوصف/الفئة', controller: _categoryField),
-                _EditableRow(label: 'الجهاز المتوافق', controller: _compatibleModelField),
-                _EditableRow(label: 'أجهزة متوافقة إضافية', controller: _additionalCompatField),
-                _EditableRow(label: 'تقدير السعر', controller: _marketValueField),
-                _EditableRow(label: 'ملاحظات فنية', controller: _notesField, maxLines: 3),
+                if (_fieldVisible('part_model'))
+                  _EditableRow(label: 'الموديل (الاسم الكودي)', controller: _partModelField),
+                if (_fieldVisible('serial_number'))
+                  _EditableRow(label: 'الرقم التسلسلي (Serial)', controller: _serialField),
+                if (_fieldVisible('brand'))
+                  _EditableRow(label: 'الماركة', controller: _brandField),
+                if (_fieldVisible('category'))
+                  _EditableRow(label: 'الوصف/الفئة', controller: _categoryField),
+                if (_fieldVisible('compatible_model'))
+                  _EditableRow(label: 'الجهاز المتوافق', controller: _compatibleModelField),
+                if (_fieldVisible('additional_compat'))
+                  _EditableRow(label: 'أجهزة متوافقة إضافية', controller: _additionalCompatField),
+                if (_fieldVisible('market_value'))
+                  _EditableRow(label: 'تقدير السعر', controller: _marketValueField),
+                if (_fieldVisible('insights'))
+                  _EditableRow(label: 'ملاحظات فنية', controller: _notesField, maxLines: 3),
               ],
             ),
           ),
