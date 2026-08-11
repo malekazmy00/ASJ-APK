@@ -10,10 +10,13 @@ import '../../../core/models/enums.dart';
 import '../../../core/repositories/export_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// تصدير بيانات النظام كملفات CSV. متاحة لأي مستخدم عنده صلاحية
 /// can_export (زي المخزون/تحليل البيانات بالظبط)، مش حصراً على دور.
+/// الجولة الثالثة (نقطة ٢٧): أي كارت تقرير قابل للإخفاء لحساب معين
+/// من الأدمن (تحكم على مستوى التقرير كامل، مش عمود عمود جوه الملف).
 class ExportScreen extends ConsumerStatefulWidget {
   const ExportScreen({super.key});
 
@@ -25,7 +28,24 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   final _repo = ExportRepository();
   final _logRepo = LogRepository();
   final _notifRepo = NotificationRepository();
+  final _fieldRepo = FieldPermissionsRepository();
   String? _generatingKey;
+  Map<String, bool> _fieldOverrides = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFieldOverrides();
+  }
+
+  Future<void> _loadFieldOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _fieldRepo.getOverrides(username, 'export');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
+
+  bool _fieldVisible(String key) => FieldPermissionsRepository.isVisible(_fieldOverrides, key);
 
   Future<void> _export({
     required String key,
@@ -91,43 +111,48 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _ExportTile(
-          title: 'المخزون الكامل',
-          subtitle: 'كل القطع المسجّلة بكل الحالات',
-          icon: Icons.inventory_2_outlined,
-          loading: _generatingKey == 'full',
-          onTap: () => _export(key: 'full', fileLabel: 'المخزون_الكامل', fetch: _repo.getFullInventory),
-        ),
-        _ExportTile(
-          title: 'المتاح فقط',
-          subtitle: 'القطع اللي حالتها "متاح" حالياً',
-          icon: Icons.check_circle_outline,
-          loading: _generatingKey == 'available',
-          onTap: () =>
-              _export(key: 'available', fileLabel: 'المتاح', fetch: _repo.getAvailableInventory),
-        ),
-        _ExportTile(
-          title: 'المصروف',
-          subtitle: 'القطع اللي حالتها "صادر"',
-          icon: Icons.outbox_outlined,
-          loading: _generatingKey == 'dispatched',
-          onTap: () =>
-              _export(key: 'dispatched', fileLabel: 'المصروف', fetch: _repo.getDispatchedInventory),
-        ),
-        _ExportTile(
-          title: 'قاعدة المعرفة',
-          subtitle: 'كل بيانات القطع الفنية المحفوظة',
-          icon: Icons.storage_outlined,
-          loading: _generatingKey == 'kb',
-          onTap: () => _export(key: 'kb', fileLabel: 'قاعدة_المعرفة', fetch: _repo.getKnowledgeBase),
-        ),
-        _ExportTile(
-          title: 'سجل الحركات',
-          subtitle: 'كل العمليات المسجّلة من أول يوم',
-          icon: Icons.history,
-          loading: _generatingKey == 'log',
-          onTap: () => _export(key: 'log', fileLabel: 'سجل_الحركات', fetch: _repo.getTransactionLog),
-        ),
+        if (_fieldVisible('full_inventory'))
+          _ExportTile(
+            title: 'المخزون الكامل',
+            subtitle: 'كل القطع المسجّلة بكل الحالات',
+            icon: Icons.inventory_2_outlined,
+            loading: _generatingKey == 'full',
+            onTap: () => _export(key: 'full', fileLabel: 'المخزون_الكامل', fetch: _repo.getFullInventory),
+          ),
+        if (_fieldVisible('available'))
+          _ExportTile(
+            title: 'المتاح فقط',
+            subtitle: 'القطع اللي حالتها "متاح" حالياً',
+            icon: Icons.check_circle_outline,
+            loading: _generatingKey == 'available',
+            onTap: () =>
+                _export(key: 'available', fileLabel: 'المتاح', fetch: _repo.getAvailableInventory),
+          ),
+        if (_fieldVisible('dispatched'))
+          _ExportTile(
+            title: 'المصروف',
+            subtitle: 'القطع اللي حالتها "صادر"',
+            icon: Icons.outbox_outlined,
+            loading: _generatingKey == 'dispatched',
+            onTap: () =>
+                _export(key: 'dispatched', fileLabel: 'المصروف', fetch: _repo.getDispatchedInventory),
+          ),
+        if (_fieldVisible('kb'))
+          _ExportTile(
+            title: 'قاعدة المعرفة',
+            subtitle: 'كل بيانات القطع الفنية المحفوظة',
+            icon: Icons.storage_outlined,
+            loading: _generatingKey == 'kb',
+            onTap: () => _export(key: 'kb', fileLabel: 'قاعدة_المعرفة', fetch: _repo.getKnowledgeBase),
+          ),
+        if (_fieldVisible('log'))
+          _ExportTile(
+            title: 'سجل الحركات',
+            subtitle: 'كل العمليات المسجّلة من أول يوم',
+            icon: Icons.history,
+            loading: _generatingKey == 'log',
+            onTap: () => _export(key: 'log', fileLabel: 'سجل_الحركات', fetch: _repo.getTransactionLog),
+          ),
       ],
     );
   }
