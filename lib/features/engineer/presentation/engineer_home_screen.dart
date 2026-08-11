@@ -14,6 +14,7 @@ import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
@@ -595,6 +596,7 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
     );
   }
 }
+
 // ---------------------------------------------------------------------
 // شاشة تعديل قطعة كاملة: حقول المخزون + حقول قاعدة المعرفة المرتبطة
 // برقم القطعة مع بعض، بدل شاشتين منفصلتين.
@@ -615,12 +617,14 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
   final _notificationRepo = NotificationRepository();
+  final _fieldRepo = FieldPermissionsRepository();
   final _picker = ImagePicker();
 
   bool _loading = true;
   bool _saving = false;
   bool _reanalyzing = false;
   XFile? _pickedImage;
+  Map<String, bool> _fieldOverrides = {};
 
   late final TextEditingController _partNumberField;
   late final TextEditingController _partModelField;
@@ -656,7 +660,17 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     _marketValueField = TextEditingController();
     _insightsField = TextEditingController();
     _loadKnowledge();
+    _loadFieldOverrides();
   }
+
+  /// الجولة الثالثة (نقطة ٢٧): إيه عناصر لوحة التعديل اللي الأدمن سمح
+  /// بظهورها لهذا الحساب.
+  Future<void> _loadFieldOverrides() async {
+    final overrides = await _fieldRepo.getOverrides(widget.username, 'edit_dashboard');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
+
+  bool _fieldVisible(String key) => FieldPermissionsRepository.isVisible(_fieldOverrides, key);
 
   Future<void> _loadKnowledge() async {
     final kb = await _knowledgeRepo.getByPartNumber(widget.item.partNumber);
@@ -954,7 +968,8 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.primary),
               textAlign: TextAlign.right,
             ),
-            if (ItemStatus.fromDb(widget.item.status) == ItemStatus.out) ...[
+            if (_fieldVisible('return_button') &&
+                ItemStatus.fromDb(widget.item.status) == ItemStatus.out) ...[
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: _saving ? null : _returnToInventory,
@@ -963,117 +978,130 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
                 style: OutlinedButton.styleFrom(foregroundColor: AppColors.success),
               ),
             ],
-            const SizedBox(height: 16),
-            Text('إعادة تحليل بصورة (اختياري)', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
-            const SizedBox(height: 8),
-            if (_pickedImage != null)
-              Stack(
-                alignment: Alignment.topLeft,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(File(_pickedImage!.path), height: 130, width: double.infinity, fit: BoxFit.cover),
-                  ),
-                  IconButton.filled(
-                    onPressed: () => setState(() => _pickedImage = null),
-                    style: IconButton.styleFrom(backgroundColor: AppColors.danger),
-                    icon: const Icon(Icons.close, size: 18, color: Colors.white),
-                  ),
-                ],
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickImage(ImageSource.camera),
-                      icon: const Icon(Icons.photo_camera_outlined),
-                      label: const Text('كاميرا'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickImage(ImageSource.gallery),
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('من المعرض'),
-                    ),
-                  ),
-                ],
-              ),
-            if (_pickedImage == null) ...[
+            if (_fieldVisible('photo_reanalyze')) ...[
+              const SizedBox(height: 16),
+              Text('إعادة تحليل بصورة (اختياري)', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _reanalyzing ? null : _reanalyze,
-                icon: _reanalyzing
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.auto_awesome),
-                label: const Text('إعادة تحليل (بدون صورة، برقم القطعة المكتوب)'),
-              ),
-            ],
-            if (_pickedImage != null) ...[
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
-                onPressed: _reanalyzing ? null : _reanalyze,
-                icon: _reanalyzing
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.auto_awesome),
-                label: const Text('حلّل الصورة دي'),
-              ),
+              if (_pickedImage != null)
+                Stack(
+                  alignment: Alignment.topLeft,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.file(File(_pickedImage!.path), height: 130, width: double.infinity, fit: BoxFit.cover),
+                    ),
+                    IconButton.filled(
+                      onPressed: () => setState(() => _pickedImage = null),
+                      style: IconButton.styleFrom(backgroundColor: AppColors.danger),
+                      icon: const Icon(Icons.close, size: 18, color: Colors.white),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _pickImage(ImageSource.camera),
+                        icon: const Icon(Icons.photo_camera_outlined),
+                        label: const Text('كاميرا'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _pickImage(ImageSource.gallery),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('من المعرض'),
+                      ),
+                    ),
+                  ],
+                ),
+              if (_pickedImage == null) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _reanalyzing ? null : _reanalyze,
+                  icon: _reanalyzing
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.auto_awesome),
+                  label: const Text('إعادة تحليل (بدون صورة، برقم القطعة المكتوب)'),
+                ),
+              ],
+              if (_pickedImage != null) ...[
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: _reanalyzing ? null : _reanalyze,
+                  icon: _reanalyzing
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.auto_awesome),
+                  label: const Text('حلّل الصورة دي'),
+                ),
+              ],
             ],
             const SizedBox(height: 16),
             Text('بيانات المخزون', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
             const SizedBox(height: 8),
-            TextField(
-              controller: _partNumberField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'رقم القطعة',
-                helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+            if (_fieldVisible('part_number_edit')) ...[
+              TextField(
+                controller: _partNumberField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  labelText: 'رقم القطعة',
+                  helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _locationField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الموقع'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _serialField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'الرقم التسلسلي (Serial)',
-                helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+              const SizedBox(height: 10),
+            ],
+            if (_fieldVisible('location')) ...[
+              TextField(
+                controller: _locationField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'الموقع'),
               ),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<ItemStatus>(
-              initialValue: _status,
-              decoration: const InputDecoration(labelText: 'الحالة'),
-              items: ItemStatus.values
-                  .map((s) => DropdownMenuItem(value: s, child: Text(s.arabicLabel)))
-                  .toList(),
-              onChanged: (v) => setState(() => _status = v ?? _status),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<ItemCondition>(
-              initialValue: _condition,
-              decoration: const InputDecoration(labelText: 'الحالة الفنية'),
-              items: ItemCondition.values
-                  .map((c) => DropdownMenuItem(value: c, child: Text(c.dbValue)))
-                  .toList(),
-              onChanged: (v) => setState(() => _condition = v ?? _condition),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<OwnershipStatus>(
-              initialValue: _ownership,
-              decoration: const InputDecoration(labelText: 'حالة الملكية'),
-              items: OwnershipStatus.values
-                  .map((o) => DropdownMenuItem(value: o, child: Text(o.arabicLabel)))
-                  .toList(),
-              onChanged: (v) => setState(() => _ownership = v ?? _ownership),
-            ),
+              const SizedBox(height: 10),
+            ],
+            if (_fieldVisible('serial_edit')) ...[
+              TextField(
+                controller: _serialField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  labelText: 'الرقم التسلسلي (Serial)',
+                  helperText: 'أي تغيير هنا محتاج موافقة الأدمن قبل ما يتفعّل',
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_fieldVisible('status')) ...[
+              DropdownButtonFormField<ItemStatus>(
+                initialValue: _status,
+                decoration: const InputDecoration(labelText: 'الحالة'),
+                items: ItemStatus.values
+                    .map((s) => DropdownMenuItem(value: s, child: Text(s.arabicLabel)))
+                    .toList(),
+                onChanged: (v) => setState(() => _status = v ?? _status),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_fieldVisible('condition')) ...[
+              DropdownButtonFormField<ItemCondition>(
+                initialValue: _condition,
+                decoration: const InputDecoration(labelText: 'الحالة الفنية'),
+                items: ItemCondition.values
+                    .map((c) => DropdownMenuItem(value: c, child: Text(c.dbValue)))
+                    .toList(),
+                onChanged: (v) => setState(() => _condition = v ?? _condition),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_fieldVisible('ownership'))
+              DropdownButtonFormField<OwnershipStatus>(
+                initialValue: _ownership,
+                decoration: const InputDecoration(labelText: 'حالة الملكية'),
+                items: OwnershipStatus.values
+                    .map((o) => DropdownMenuItem(value: o, child: Text(o.arabicLabel)))
+                    .toList(),
+                onChanged: (v) => setState(() => _ownership = v ?? _ownership),
+              ),
             const SizedBox(height: 20),
             Text('قاعدة المعرفة الفنية', style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.right),
             const SizedBox(height: 8),
@@ -1082,43 +1110,55 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               textAlign: TextAlign.right,
               decoration: const InputDecoration(labelText: 'الموديل (الاسم الكودي)'),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _brandField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'البراند'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _categoryField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الفئة/الوصف'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _compatibleModelField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'الجهاز المتوافق'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _additionalCompatField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'أجهزة متوافقة إضافية'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _marketValueField,
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(labelText: 'السعر التقريبي'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _insightsField,
-              textAlign: TextAlign.right,
-              maxLines: 3,
-              decoration: const InputDecoration(labelText: 'ملاحظات فنية'),
-            ),
+            if (_fieldVisible('brand')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _brandField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'البراند'),
+              ),
+            ],
+            if (_fieldVisible('category')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _categoryField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'الفئة/الوصف'),
+              ),
+            ],
+            if (_fieldVisible('compatible_model')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _compatibleModelField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'الجهاز المتوافق'),
+              ),
+            ],
+            if (_fieldVisible('additional_compat')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _additionalCompatField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'أجهزة متوافقة إضافية'),
+              ),
+            ],
+            if (_fieldVisible('market_value')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _marketValueField,
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(labelText: 'السعر التقريبي'),
+              ),
+            ],
+            if (_fieldVisible('insights')) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _insightsField,
+                textAlign: TextAlign.right,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'ملاحظات فنية'),
+              ),
+            ],
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _saving ? null : _save,
