@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../theme/app_theme.dart';
@@ -6,19 +7,15 @@ import '../theme/app_theme.dart';
 /// يفتح شاشة سكانر باركود كاملة ويرجع أول قيمة يتم مسحها، أو null لو
 /// المستخدم رجع من غير ما يمسح حاجة.
 ///
-/// الجولة الثالثة (باج ١٣ — محاولة تانية بعد التأكد إن الصلاحية
-/// شغّالة): السكرين شوت أكّد إن صلاحية الكاميرا بتتوافق عليها تلقائي
-/// من غير مشكلة (مفيش نافذة صلاحية فشلت ولا زرار "فتح الإعدادات"
-/// ظهر) — يبقى `genericError` مش سببه الصلاحية خالص، والمشكلة في
-/// بدء تشغيل الكاميرا نفسها (CameraX).
-///
-/// حسب توثيق مكتبة mobile_scanner نفسها، نفس تصنيف الخطأ ده بيظهر
-/// كمان لما الـ controller يتحاول يبدأ (`start()`) مرتين في نفس
-/// الوقت — بيحصل غالباً لما `autoStart` التلقائي بيتعارض مع انتقال
-/// الشاشة نفسه. اتشال الاعتماد على autoStart، وبقى فيه بدء يدوي
-/// محكوم + إيقاف صريح قبل أي إعادة محاولة أو إغلاق للشاشة. كمان
-/// بقينا نطلع تفاصيل الخطأ الحقيقية (errorDetails) مش بس التصنيف
-/// العام، عشان لو استمرت المشكلة نعرف السبب الدقيق من الرسالة نفسها.
+/// الجولة الثالثة (باج ١٣ — محاولة تالتة): السكرين شوت الأخير كشف
+/// الاستثناء الحقيقي جوه أندرويد نفسه (NullPointerException:
+/// "getClass() on a null object reference") — ده نمط عام بيحصل في أي
+/// Plugin أندرويد بيمرّر بيانات عبر Method Channel لما قيمة تبقى null
+/// في مكان النظام مستني فيه كائن حقيقي، مش عيب خاص بمكتبة الكاميرا
+/// تحديداً. عشان نعرف السبب بالظبط (مكتبة الكاميرا نفسها ولا
+/// permission_handler) محتاجين الـ Stack Trace الكامل مش الرسالة بس —
+/// دلوقتي بنطلعه كامل (PlatformException.stacktrace لو موجود) بدل ما
+/// نفضل نخمّن.
 Future<String?> scanBarcode(BuildContext context) {
   return Navigator.of(context).push<String>(
     MaterialPageRoute(builder: (context) => const _BarcodeScannerPage()),
@@ -64,7 +61,19 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
       _controller = null;
     }
 
-    final status = await Permission.camera.request();
+    PermissionStatus status;
+    try {
+      status = await Permission.camera.request();
+    } catch (e, st) {
+      // لو حتى طلب الصلاحية نفسه فشل، ده مؤشر قوي إن المشكلة في
+      // permission_handler نفسها مش في mobile_scanner.
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _errorText = 'فشل طلب صلاحية الكاميرا (permission_handler):\n${_describeError(e, st)}';
+      });
+      return;
+    }
     if (!mounted) return;
 
     if (!status.isGranted) {
@@ -87,17 +96,42 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
         _busy = false;
         _ready = true;
       });
-    } catch (e) {
+    } catch (e, st) {
       await controller.dispose();
       if (!mounted) return;
-      final detail = e is MobileScannerException
-          ? (e.errorDetails?.message ?? e.errorCode.toString())
-          : e.toString();
       setState(() {
         _busy = false;
-        _errorText = 'تعذر تشغيل الكاميرا:\n$detail';
+        _errorText = 'تعذر تشغيل الكاميرا (mobile_scanner):\n${_describeError(e, st)}';
       });
     }
+  }
+
+  /// بيبني وصف كامل للخطأ — النوع، الرسالة، وأهم سطرين من الـ Stack
+  /// Trace (اللي بيوضح بالظبط مكتبة/سطر المشكلة). لو PlatformException
+  /// (زي أي خطأ Method Channel أندرويد)، بيضيف الـ code والتفاصيل
+  /// الأصلية من الجافا كمان.
+  String _describeError(Object e, StackTrace st) {
+    final buffer = StringBuffer();
+    if (e is MobileScannerException) {
+      buffer.writeln('MobileScannerErrorCode: ${e.errorCode}');
+      if (e.errorDetails?.message != null) {
+        buffer.writeln('التفاصيل: ${e.errorDetails!.message}');
+      }
+    } else if (e is PlatformException) {
+      buffer.writeln('النوع: PlatformException');
+      buffer.writeln('code: ${e.code}');
+      if (e.message != null) buffer.writeln('message: ${e.message}');
+      if (e.details != null) buffer.writeln('details: ${e.details}');
+    } else {
+      buffer.writeln('النوع: ${e.runtimeType}');
+      buffer.writeln(e.toString());
+    }
+    final stackLines = st.toString().split('\n').take(6).join('\n');
+    if (stackLines.isNotEmpty) {
+      buffer.writeln('---');
+      buffer.writeln(stackLines);
+    }
+    return buffer.toString().trim();
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -145,9 +179,13 @@ class _BarcodeScannerPageState extends State<_BarcodeScannerPage> {
               controller: _controller,
               onDetect: _onDetect,
               errorBuilder: (context, error, child) {
-                final detail = error.errorDetails?.message ?? error.errorCode.toString();
+                final buffer = StringBuffer();
+                buffer.writeln('MobileScannerErrorCode: ${error.errorCode}');
+                if (error.errorDetails?.message != null) {
+                  buffer.writeln('التفاصيل: ${error.errorDetails!.message}');
+                }
                 return _ErrorRetryView(
-                  message: 'تعذر تشغيل الكاميرا:\n$detail',
+                  message: 'تعذر تشغيل الكاميرا (mobile_scanner):\n${buffer.toString().trim()}',
                   onRetry: _init,
                   onOpenSettings: null,
                 );
@@ -192,10 +230,18 @@ class _ErrorRetryView extends StatelessWidget {
           children: [
             const Icon(Icons.videocam_off_outlined, color: Colors.white70, size: 42),
             const SizedBox(height: 14),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.45,
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ),
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
