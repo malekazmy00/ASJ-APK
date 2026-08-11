@@ -9,6 +9,7 @@ import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../../core/models/app_user.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../item_timeline/presentation/item_timeline_screen.dart';
@@ -38,6 +39,8 @@ class _InventoryItemDetailScreenState
   final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
   final _notifRepo = NotificationRepository();
+  final _fieldRepo = FieldPermissionsRepository();
+  Map<String, bool> _fieldOverrides = {};
 
   late InventoryItem _item;
   KnowledgeBaseEntry? _kb;
@@ -48,7 +51,19 @@ class _InventoryItemDetailScreenState
     super.initState();
     _item = widget.item;
     _load();
+    _loadFieldOverrides();
   }
+
+  /// الجولة الثالثة (نقطة ٢٧): إيه عناصر صفحة تفاصيل القطعة اللي
+  /// الأدمن سمح بظهورها لهذا الحساب (نفس تبويب "المخزون").
+  Future<void> _loadFieldOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _fieldRepo.getOverrides(username, 'inventory_summary');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
+
+  bool _fieldVisible(String key) => FieldPermissionsRepository.isVisible(_fieldOverrides, key);
 
   Future<void> _load() async {
     setState(() => _loading = true);
@@ -357,10 +372,15 @@ class _InventoryItemDetailScreenState
                       _row('الجهاز المتوافق', _kb!.compatibleModel!),
                     if (_item.description != null && _item.description!.isNotEmpty)
                       _row('الوصف', _item.description!),
-                    _row('المكان', _item.location ?? '—'),
+                    if (_fieldVisible('location_field'))
+                      _row('المكان', _item.location ?? '—'),
                     _row('الحالة (فنية)', _item.condition ?? '—'),
                     _row('حالة المخزون', _item.status),
                     _row('حالة الملكية', _item.ownershipStatus),
+                    if (_fieldVisible('market_value') &&
+                        _kb?.marketValue != null &&
+                        _kb!.marketValue!.isNotEmpty)
+                      _row('السعر التقريبي', _kb!.marketValue!),
                     if (_item.notes != null && _item.notes!.isNotEmpty)
                       _row('ملاحظات', _item.notes!),
                   ],
@@ -372,29 +392,31 @@ class _InventoryItemDetailScreenState
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (available)
-                  ElevatedButton.icon(
-                    onPressed: _dispatch,
-                    icon: const Icon(Icons.outbox),
-                    label: const Text('صرف'),
-                  )
-                else
-                  ElevatedButton.icon(
-                    onPressed: _returnToStock,
-                    icon: const Icon(Icons.undo),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-                    label: const Text('استرجاع للمخزون'),
+                if (_fieldVisible('dispatch_button'))
+                  available
+                      ? ElevatedButton.icon(
+                          onPressed: _dispatch,
+                          icon: const Icon(Icons.outbox),
+                          label: const Text('صرف'),
+                        )
+                      : ElevatedButton.icon(
+                          onPressed: _returnToStock,
+                          icon: const Icon(Icons.undo),
+                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+                          label: const Text('استرجاع للمخزون'),
+                        ),
+                if (_fieldVisible('track_button'))
+                  OutlinedButton.icon(
+                    onPressed: _canTrack ? _openTimeline : null,
+                    icon: const Icon(Icons.timeline_outlined),
+                    label: const Text('تتبع'),
                   ),
-                OutlinedButton.icon(
-                  onPressed: _canTrack ? _openTimeline : null,
-                  icon: const Icon(Icons.timeline_outlined),
-                  label: const Text('تتبع'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _canEdit ? _editBasicFields : null,
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('تعديل البيانات'),
-                ),
+                if (_fieldVisible('edit_button'))
+                  OutlinedButton.icon(
+                    onPressed: _canEdit ? _editBasicFields : null,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('تعديل البيانات'),
+                  ),
               ],
             ),
           ],
