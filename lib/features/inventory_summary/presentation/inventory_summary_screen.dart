@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
+import '../../auth/presentation/auth_providers.dart';
 import 'inventory_group_items_screen.dart';
 import 'inventory_item_detail_screen.dart';
 
@@ -14,15 +17,19 @@ import 'inventory_item_detail_screen.dart';
 /// الاختيار) + زرار مسح باركود + إصلاح باج البحث بالـ ID.
 /// نقطة ١٩: زرار "⚙️ عرض" بيفتح نافذة صغيرة فيها شجرة الفلاتر +
 /// الترتيب (بما فيه الترتيب بالتاريخ) + خيار "مجمّعة/فردية" لطريقة العرض.
-class InventorySummaryScreen extends StatefulWidget {
+/// نقطة ٢٧: بعض العناصر (البحث بالباركود، زرار الفلاتر، خيار "فردية"،
+/// حقل الموقع في العرض الفردي) قابلة للإخفاء لحساب معين من الأدمن.
+class InventorySummaryScreen extends ConsumerStatefulWidget {
   const InventorySummaryScreen({super.key});
 
   @override
-  State<InventorySummaryScreen> createState() => _InventorySummaryScreenState();
+  ConsumerState<InventorySummaryScreen> createState() => _InventorySummaryScreenState();
 }
 
-class _InventorySummaryScreenState extends State<InventorySummaryScreen> {
+class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen> {
   final _repo = InventoryRepository();
+  final _fieldRepo = FieldPermissionsRepository();
+  Map<String, bool> _fieldOverrides = {};
 
   // بيانات المخزون بشكلَيها (مجمّعة/فردية) — واحد بس بيتحمّل حسب _viewMode
   List<Map<String, dynamic>> _groups = [];
@@ -66,7 +73,19 @@ class _InventorySummaryScreenState extends State<InventorySummaryScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadFieldOverrides();
   }
+
+  /// الجولة الثالثة (نقطة ٢٧): إيه عناصر تبويب المخزون اللي الأدمن
+  /// سمح بظهورها لهذا الحساب.
+  Future<void> _loadFieldOverrides() async {
+    final username = ref.read(authControllerProvider)?.username;
+    if (username == null) return;
+    final overrides = await _fieldRepo.getOverrides(username, 'inventory_summary');
+    if (mounted) setState(() => _fieldOverrides = overrides);
+  }
+
+  bool _fieldVisible(String key) => FieldPermissionsRepository.isVisible(_fieldOverrides, key);
 
   Future<void> _load() async {
     setState(() {
@@ -189,36 +208,37 @@ class _InventorySummaryScreenState extends State<InventorySummaryScreen> {
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 16),
 
-                Text('طريقة العرض', textAlign: TextAlign.right,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  alignment: WrapAlignment.end,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('مجمّعة'),
-                      selected: viewMode == 'grouped',
-                      onSelected: (_) => setSheetState(() {
-                        viewMode = 'grouped';
-                        if (sortField != 'total_count' &&
-                            !_sortLabelsGrouped.containsKey(sortField)) {
-                          sortField = 'total_count';
-                        }
-                      }),
-                    ),
-                    ChoiceChip(
-                      label: const Text('فردية'),
-                      selected: viewMode == 'individual',
-                      onSelected: (_) => setSheetState(() {
-                        viewMode = 'individual';
-                        if (sortField == 'total_count') sortField = 'item_id';
-                      }),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 14),
+                if (_fieldVisible('individual_view')) ...[
+                  Text('طريقة العرض', textAlign: TextAlign.right,
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('مجمّعة'),
+                        selected: viewMode == 'grouped',
+                        onSelected: (_) => setSheetState(() {
+                          viewMode = 'grouped';
+                          if (sortField != 'total_count' &&
+                              !_sortLabelsGrouped.containsKey(sortField)) {
+                            sortField = 'total_count';
+                          }
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: const Text('فردية'),
+                        selected: viewMode == 'individual',
+                        onSelected: (_) => setSheetState(() {
+                          viewMode = 'individual';
+                          if (sortField == 'total_count') sortField = 'item_id';
+                        }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 Text('حالة القطعة', textAlign: TextAlign.right,
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
@@ -411,33 +431,36 @@ class _InventorySummaryScreenState extends State<InventorySummaryScreen> {
                     hintText: 'بحث برقم القطعة، الاسم، أو الـ ID',
                     fetchSuggestions: (q) => _repo.getSuggestions(q),
                     onSelected: _handleSelection,
+                    showBarcodeButton: _fieldVisible('barcode_search'),
                     onBarcodeScanned: _handleSelection,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    IconButton.outlined(
-                      onPressed: _openFilterSheet,
-                      icon: const Icon(Icons.tune),
-                      tooltip: 'اختار طريقة العرض',
-                    ),
-                    if (_hasActiveFilters)
-                      Positioned(
-                        top: -2,
-                        right: -2,
-                        child: Container(
-                          width: 9,
-                          height: 9,
-                          decoration: const BoxDecoration(
-                            color: AppColors.accent,
-                            shape: BoxShape.circle,
+                if (_fieldVisible('filter_sort_button')) ...[
+                  const SizedBox(width: 8),
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      IconButton.outlined(
+                        onPressed: _openFilterSheet,
+                        icon: const Icon(Icons.tune),
+                        tooltip: 'اختار طريقة العرض',
+                      ),
+                      if (_hasActiveFilters)
+                        Positioned(
+                          top: -2,
+                          right: -2,
+                          child: Container(
+                            width: 9,
+                            height: 9,
+                            decoration: const BoxDecoration(
+                              color: AppColors.accent,
+                              shape: BoxShape.circle,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -540,9 +563,11 @@ class _InventorySummaryScreenState extends State<InventorySummaryScreen> {
               textAlign: TextAlign.right,
             ),
             subtitle: Text(
-              [item.itemType, item.location ?? 'بدون مكان', item.status]
-                  .where((s) => s.isNotEmpty)
-                  .join(' • '),
+              [
+                item.itemType,
+                if (_fieldVisible('location_field')) item.location ?? 'بدون مكان',
+                item.status,
+              ].where((s) => s.isNotEmpty).join(' • '),
               textAlign: TextAlign.right,
             ),
             trailing: const Icon(Icons.chevron_left),
