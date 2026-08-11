@@ -20,6 +20,7 @@ import '../../../core/repositories/engineer_query_repository.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../inventory_summary/presentation/inventory_group_items_screen.dart';
+import '../../knowledge_base_detail/presentation/knowledge_base_detail_screen.dart';
 
 // ---------------------------------------------------------------------
 // تبويب البحث الذكي والصرف (ودفتر الاستعلامات المدمج)
@@ -147,6 +148,16 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
     } finally {
       if (mounted) setState(() => _isSearching = false);
     }
+  }
+
+  /// بعد الرجوع من صفحة تفاصيل قاعدة المعرفة (نقطة ٢٦)، بنحدّث نتائج
+  /// القاعدة بس — مش بحث كامل تاني (ده كان هيسجل استعلام جديد ويبعت
+  /// إشعار ويعيد نداء Gemini من غير داعي).
+  Future<void> _refreshKnowledgeResults() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    final kbResults = await _knowledgeRepo.searchByCategoryOrPart(query);
+    if (mounted) setState(() => _knowledgeResults = kbResults);
   }
 
   Future<void> _runGeminiSearch(String query) async {
@@ -349,6 +360,17 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
                       ].join('  •  '),
                       textAlign: TextAlign.right,
                     ),
+                    trailing: const Icon(Icons.chevron_left),
+                    // الجولة الثالثة (نقطة ٢٦): يفتح صفحة تفاصيل مستقلة
+                    // لقاعدة المعرفة، فيها كل الحقول كاملة + تعديل فوري.
+                    onTap: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => KnowledgeBaseDetailScreen(partNumber: e.partNumber),
+                        ),
+                      );
+                      _refreshKnowledgeResults();
+                    },
                   ),
                 )),
           const SizedBox(height: 16),
