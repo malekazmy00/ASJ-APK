@@ -19,6 +19,10 @@ import '../../auth/presentation/auth_providers.dart';
 /// ٣ أنواع إدخال: قطعة برقم / قطعة بدون رقم / معدة شغل — كل قطعة
 /// بتتسجل لوحدها (اتشالت خانة "عدد القطع")، وبعد الحفظ بيبان رقم الـ
 /// ID بشكل واضح عشان يتكتب على القطعة فعلياً.
+///
+/// آخر تعديل: نوع القطعة بقى بيتحدد من Gemini بصمت (اتشال الدروب
+/// داون خالص من مساري "برقم قطعة"/"بدون رقم")، و"معدة شغل" بقى ليها
+/// خانة نص حر بدل الدروب داون (مالهاش تحليل AI أصلاً).
 enum _EntryMode { withPartNumber, withoutPartNumber, equipment }
 
 class WorkerBody extends ConsumerStatefulWidget {
@@ -33,6 +37,7 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
   final _locationController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _notesController = TextEditingController();
+  final _equipmentTypeController = TextEditingController();
 
   String _itemType = defaultItemTypes.first;
   ItemCondition _condition = ItemCondition.used;
@@ -86,6 +91,7 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
     _locationController.dispose();
     _descriptionController.dispose();
     _notesController.dispose();
+    _equipmentTypeController.dispose();
     _partNumberField.dispose();
     _partModelField.dispose();
     _serialField.dispose();
@@ -157,9 +163,8 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         _additionalCompatField.text = result['Additional_Compatibility'] ?? '';
         _marketValueField.text = result['Market_Value'] ?? '';
         _notesField.text = result['Gemini_Insights'] ?? '';
-        // اختيار نوع القطعة تلقائي من التحليل (لو النموذج رجّع قيمة
-        // من نفس القايمة المتاحة في الـ dropdown) — العامل لسه يقدر
-        // يغيّرها يدوي لو مش دقيقة.
+        // اختيار نوع القطعة تلقائي من التحليل — بصمت تماماً، مفيش
+        // دروب داون للعامل يشوفه أو يغيّره خالص.
         final suggestedType = result['Item_Type'] as String?;
         if (suggestedType != null && defaultItemTypes.contains(suggestedType)) {
           _itemType = suggestedType;
@@ -208,10 +213,16 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         ? _partNumberField.text.trim()
         : 'PENDING';
 
+    // نوع المعدة نص حر بيكتبه العامل — لازم يكون متكتب قبل الحفظ.
+    if (isEquipment && _equipmentTypeController.text.trim().isEmpty) {
+      _showSnack('اكتب نوع المعدة الأول', isError: true);
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       final item = InventoryItem(
-        itemType: _itemType,
+        itemType: isEquipment ? _equipmentTypeController.text.trim() : _itemType,
         partNumber: partNumber,
         description: _descriptionController.text.trim().isEmpty
             ? null
@@ -265,6 +276,7 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         _partNumberField.clear();
         _partModelField.clear();
         _serialField.clear();
+        _equipmentTypeController.clear();
       });
       _showSnack('تم الحفظ بنجاح');
     } catch (e) {
@@ -343,15 +355,18 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              DropdownButtonFormField<String>(
-                initialValue: _itemType,
-                decoration: InputDecoration(labelText: isEquipment ? 'نوع المعدة' : 'نوع القطعة'),
-                items: defaultItemTypes
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (v) => setState(() => _itemType = v ?? _itemType),
-              ),
-              const SizedBox(height: 12),
+              // نوع القطعة بقى بيتحدد من Gemini بصمت (مفيش دروب داون
+              // ظاهر للعامل خالص) — لمساري "برقم قطعة"/"بدون رقم".
+              // "معدة شغل" مالهاش تحليل AI أصلاً، فالعامل بيكتب النوع
+              // نص حر بنفسه.
+              if (isEquipment) ...[
+                TextField(
+                  controller: _equipmentTypeController,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(labelText: 'نوع المعدة'),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (showAnalysis) ...[
                 _ImagePickerRow(
                   pickedImage: _pickedImage,
