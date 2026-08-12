@@ -7,6 +7,7 @@ import '../../../core/models/enums.dart';
 import '../../../core/models/notification.dart';
 import '../../../core/repositories/user_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/repositories/field_permissions_repository.dart';
 import '../../../core/constants/nav_tabs.dart';
 import '../../auth/presentation/auth_providers.dart';
 
@@ -21,6 +22,7 @@ class UsersTab extends ConsumerStatefulWidget {
 class _UsersTabState extends ConsumerState<UsersTab> {
   final _userRepo = UserRepository();
   final _notifRepo = NotificationRepository();
+  final _fieldRepo = FieldPermissionsRepository();
   List<AppUser> _users = [];
   bool _loading = true;
 
@@ -147,6 +149,20 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     // فيه من نفس setDialogState، فمفيش تعارض في دورة الـ rebuild.
     bool tabsExpanded = false;
 
+    // الجولة الثالثة (نقطة ٢٧) — التحكم في العناصر الداخلية جوه ٥
+    // تبويبات بس. بنحمّل كل التخصيصات المحفوظة لكل التبويبات الخمسة
+    // مرة واحدة، ونعمل نسخة منفصلة (originalFieldOverrides) نقارن
+    // بيها وقت الحفظ عشان نكتب بس اللي اتغيّر فعلاً.
+    final loadedFieldOverrides = await _fieldRepo.getAllOverridesForUser(user.username);
+    final originalFieldOverrides = <String, Map<String, bool>>{
+      for (final entry in loadedFieldOverrides.entries) entry.key: Map.of(entry.value),
+    };
+    final fieldChoices = <String, Map<String, bool>>{
+      for (final entry in loadedFieldOverrides.entries) entry.key: Map.of(entry.value),
+    };
+    bool fieldsExpanded = false;
+    String selectedFieldTab = FieldPermissionsRepository.controllableTabLabels.keys.first;
+
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -229,6 +245,53 @@ class _UsersTabState extends ConsumerState<UsersTab> {
                         ),
                       );
                     }),
+                  const SizedBox(height: 8),
+                  InkWell(
+                    onTap: () => setDialogState(() => fieldsExpanded = !fieldsExpanded),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Row(
+                        children: [
+                          Icon(fieldsExpanded ? Icons.expand_less : Icons.expand_more),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text('التحكم في العناصر الداخلية (تخصيص فردي)',
+                                textAlign: TextAlign.right),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // الجولة الثالثة (نقطة ٢٧): تختار تبويب من الخمسة
+                  // القابلة للتحكم، وتظهرلك قايمة عناصره — كل عنصر
+                  // Checkbox مستقل (ظاهر/مخفي) لنفس الحساب ده بس.
+                  if (fieldsExpanded) ...[
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedFieldTab,
+                      decoration: const InputDecoration(labelText: 'التبويب'),
+                      items: FieldPermissionsRepository.controllableTabLabels.entries
+                          .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                          .toList(),
+                      onChanged: (v) =>
+                          setDialogState(() => selectedFieldTab = v ?? selectedFieldTab),
+                    ),
+                    const SizedBox(height: 4),
+                    ...FieldPermissionsRepository.tabFields[selectedFieldTab]!
+                        .entries
+                        .map((fieldEntry) {
+                      final tabMap = fieldChoices.putIfAbsent(selectedFieldTab, () => {});
+                      final visible = tabMap[fieldEntry.key] ?? true;
+                      return CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: visible,
+                        title: Text(fieldEntry.value, textAlign: TextAlign.right),
+                        onChanged: (v) =>
+                            setDialogState(() => tabMap[fieldEntry.key] = v ?? true),
+                      );
+                    }),
+                  ],
                 ],
               ),
             ),
@@ -291,6 +354,34 @@ class _UsersTabState extends ConsumerState<UsersTab> {
       await _notifRepo.create(
         notifType: NotificationEventType.permissionsChanged.dbValue,
         message: '$adminUsername عدّل صلاحيات التبويبات لحساب ${user.username}',
+      );
+    }
+
+    // الجولة الثالثة (نقطة ٢٧): نكتب بس العناصر اللي اتغيّرت فعلاً عن
+    // القيمة الأصلية اللي اتحمّلت وقت فتح الـ Dialog.
+    bool fieldOverridesChanged = false;
+    for (final tabId in FieldPermissionsRepository.tabFields.keys) {
+      final original = originalFieldOverrides[tabId] ?? {};
+      final current = fieldChoices[tabId] ?? {};
+      for (final fieldKey in FieldPermissionsRepository.tabFields[tabId]!.keys) {
+        final originalVisible = original[fieldKey] ?? true;
+        final currentVisible = current[fieldKey] ?? true;
+        if (originalVisible != currentVisible) {
+          fieldOverridesChanged = true;
+          await _fieldRepo.setOverride(
+            username: user.username,
+            tabId: tabId,
+            fieldKey: fieldKey,
+            visible: currentVisible,
+            updatedBy: adminUsername,
+          );
+        }
+      }
+    }
+    if (fieldOverridesChanged) {
+      await _notifRepo.create(
+        notifType: NotificationEventType.permissionsChanged.dbValue,
+        message: '$adminUsername عدّل العناصر الداخلية الظاهرة لحساب ${user.username}',
       );
     }
 
