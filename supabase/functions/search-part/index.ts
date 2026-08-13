@@ -14,8 +14,16 @@
 //
 // يدعم أكتر من مفتاح Gemini (GEMINI_API_KEY, GEMINI_API_KEY_2,
 // GEMINI_API_KEY_3 - كلهم اختياريين عدا الأول).
+//
+// TASK-319: قبل كده الدالة دي كانت مفتوحة تماماً — أي حد معاه الـ
+// anon key يقدر يستدعيها بدون حد. دلوقتي محتاجة توكن صالح (requireAuth)
+// ومحكومة بحد أقصى نداءات/دقيقة و/يوم لكل مستخدم (Stage A بتستهلك
+// Gemini في كل الأحوال حتى لو الرد النهائي جاي من قاعدة المعرفة محلياً
+// في Stage B، فالحد بيتفحص قبل Stage A مباشرة).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireAuth, authErrorResponse } from "../_shared/auth.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
 
 const GEMINI_KEYS = ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]
   .map((name) => Deno.env.get(name))
@@ -23,6 +31,10 @@ const GEMINI_KEYS = ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// نفس حد analyze-part — استخدام عادي (بحث كل شوية) من غير استهلاك
+// جامح للحصة.
+const RATE_LIMIT = { perMinute: 20, perDay: 800 };
 
 const EXTRACTION_MODEL = "gemini-3.5-flash-lite";
 const MAIN_MODEL_CHAIN = [
@@ -77,6 +89,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: "لا يوجد أي مفتاح Gemini مضبوط على السيرفر" }, 500);
     }
 
+    const identity = await requireAuth(req);
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const rateLimit = await checkRateLimit(supabase, identity.username, "search-part", RATE_LIMIT);
+    if (!rateLimit.allowed) {
+      return jsonResponse({ success: false, error: rateLimit.error }, 429);
+    }
+
     const { query } = await req.json();
     if (!query || String(query).trim() === "") {
       return jsonResponse({ success: false, error: "بيانات ناقصة" }, 400);
@@ -87,7 +106,6 @@ Deno.serve(async (req) => {
     const extraction = await tryExtract(rawQuery);
 
     // === Stage B: بحث محلي فوري في قاعدة المعرفة بتاعتنا ===
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
     const localMatch = await tryLocalMatch(supabase, extraction, rawQuery);
     if (localMatch) {
       return jsonResponse({ success: true, result: localMatch }, 200);
@@ -102,8 +120,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ success: false, error: "فشل بعد تجربة كل النماذج والمفاتيح المتاحة" }, 502);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: `خطأ في الخادم: ${e}` }, 500);
+    return authErrorResponse(e);
   }
 });
 

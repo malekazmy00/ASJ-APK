@@ -10,14 +10,15 @@ import '../../../core/models/app_user.dart';
 /// (راجع supabase/functions/login-user/index.ts) بدل تنفيذ Argon2 على
 /// الجهاز مباشرة (غير آمن ولوجستياً غير عملي في Dart/Flutter).
 ///
-/// ملاحظة أمان مهمة (بصراحة كاملة): هذا التصميم لا يستخدم Supabase Auth
-/// ولا auth.uid()، وبالتالي سياسات RLS المبنية على auth.uid() لن تعمل
-/// هنا. نموذج الثقة الحالي مطابق تماماً لما هو معمول به في نسخة
-/// Streamlit الحالية: التحقق من الصلاحيات يتم على مستوى التطبيق (بعد
-/// تسجيل الدخول عبر الدالة)، وليس على مستوى قاعدة البيانات. هذا ليس
-/// تراجعاً عن الوضع الحالي، لكنه يستاهل تقوية لاحقاً (مثلاً: توليد
-/// custom JWT من الدالة والتحقق منه في RLS) إذا حبينا نرفع مستوى الأمان
-/// مستقبلاً.
+/// ملاحظة أمان (محدّثة): هذا التصميم لسه ما بيستخدمش Supabase Auth ولا
+/// auth.uid()، وسياسات RLS المبنية عليه لسه معطّلة عمداً — نموذج الثقة
+/// لسه على مستوى التطبيق مش الداتابيز، زي نسخة Streamlit الأصلية.
+/// لكن بقى فيه طبقة توثيق حقيقية فوق كده: login-user بعد نجاح التحقق
+/// بيولّد custom JWT موقّع من السيرفر (راجع supabase/functions/_shared/
+/// auth.ts)، وأي Edge Function حساسة (admin-create-user، admin-reset-
+/// password، open-session، resolve-approval، change-password) بقت
+/// بتتحقق من التوكن ده بنفسها قبل أي تنفيذ — مش بس بتفترض إن الطلب
+/// جاي من واجهة الأدمن.
 class AuthService {
   final SupabaseClient _client = Supabase.instance.client;
 
@@ -35,7 +36,10 @@ class AuthService {
     final data = response.data as Map<String, dynamic>?;
     if (data == null || data['success'] != true) return null;
 
-    return AppUser.fromMap(data['user'] as Map<String, dynamic>);
+    return AppUser.fromMap(
+      data['user'] as Map<String, dynamic>,
+      token: data['token'] as String?,
+    );
   }
 
   Future<void> signOut() async {

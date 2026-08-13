@@ -10,6 +10,8 @@ import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../../core/models/app_user.dart';
 import '../../auth/presentation/auth_providers.dart';
 import '../../item_timeline/presentation/item_timeline_screen.dart';
@@ -45,6 +47,10 @@ class _InventoryItemDetailScreenState
   late InventoryItem _item;
   KnowledgeBaseEntry? _kb;
   bool _loading = true;
+  // TASK-324: منع تكرار الصرف/الاسترجاع لو المستخدم دبّس الزرار أكتر
+  // من مرة (شبكة بطيئة مثلاً) — قبل كده الزرار فضل شغال طول وقت
+  // الطلب، وممكن كان يعمل سجلين/إشعارين لنفس العملية.
+  bool _dispatching = false;
 
   @override
   void initState() {
@@ -106,28 +112,38 @@ class _InventoryItemDetailScreenState
       builder: (_) => const _DispatchDialog(),
     );
     if (result == null) return;
+    if (_dispatching) return;
+    setState(() => _dispatching = true);
 
-    await _logRepo.logAction(
-      itemId: _item.itemId,
-      actionType: ActionType.out,
-      username: _username,
-      details: [
+    try {
+      final details = [
         'صرف إلى: ${result.recipient}',
         if (result.note != null) 'ملاحظة: ${result.note}',
-      ].join(' — '),
-      exitType: result.exitType.dbValue,
-    );
-    await _inventoryRepo.updateStatus(_item.itemId!, 'Out');
-    await _notifRepo.create(
-      notifType: NotificationEventType.dispatch.dbValue,
-      message: 'صرف القطعة #${_item.itemId} (${_item.partNumber}) إلى ${result.recipient}',
-      relatedId: _item.itemId,
-    );
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تم تسجيل الصرف')));
+      ].join(' — ');
+      final token = ref.read(authControllerProvider.notifier).token;
+      await _inventoryRepo.dispatchItem(
+        itemId: _item.itemId!,
+        token: token,
+        details: details,
+        exitType: result.exitType.dbValue,
+        notifMessage:
+            'صرف القطعة #${_item.itemId} (${_item.partNumber}) إلى ${result.recipient}',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('تم تسجيل الصرف')));
+      }
+      await _load();
+    } catch (e, st) {
+      AppLogger.logError('InventoryItemDetailScreen._dispatch', e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _dispatching = false);
     }
-    _load();
   }
 
   Future<void> _returnToStock() async {
@@ -155,25 +171,34 @@ class _InventoryItemDetailScreenState
       ),
     );
     if (confirmed != true) return;
+    if (_dispatching) return;
+    setState(() => _dispatching = true);
 
-    final note = noteController.text.trim();
-    await _logRepo.logAction(
-      itemId: _item.itemId,
-      actionType: ActionType.return_,
-      username: _username,
-      details: note.isEmpty ? 'استرجاع للمخزون' : 'استرجاع للمخزون — $note',
-    );
-    await _inventoryRepo.updateStatus(_item.itemId!, 'Available');
-    await _notifRepo.create(
-      notifType: NotificationEventType.returnToStock.dbValue,
-      message: 'استرجاع القطعة #${_item.itemId} (${_item.partNumber}) للمخزون',
-      relatedId: _item.itemId,
-    );
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تم الاسترجاع')));
+    try {
+      final note = noteController.text.trim();
+      final details = note.isEmpty ? 'استرجاع للمخزون' : 'استرجاع للمخزون — $note';
+      final token = ref.read(authControllerProvider.notifier).token;
+      await _inventoryRepo.returnItem(
+        itemId: _item.itemId!,
+        token: token,
+        details: details,
+        notifMessage: 'استرجاع القطعة #${_item.itemId} (${_item.partNumber}) للمخزون',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('تم الاسترجاع')));
+      }
+      await _load();
+    } catch (e, st) {
+      AppLogger.logError('InventoryItemDetailScreen._returnToStock', e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _dispatching = false);
     }
-    _load();
   }
 
   Future<void> _editBasicFields() async {
@@ -247,23 +272,30 @@ class _InventoryItemDetailScreenState
     );
 
     if (saved != true) return;
-    await _inventoryRepo.updateFields(_item.itemId!, {
-      'location': locationController.text.trim(),
-      'condition': condition,
-      'ownership_status': ownership,
-      'notes': notesController.text.trim(),
-    });
-    await _logRepo.logAction(
-      itemId: _item.itemId,
-      actionType: ActionType.update,
-      username: _username,
-      details: 'تعديل بيانات أساسية من صفحة تفاصيل القطعة',
-    );
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تم الحفظ')));
+    try {
+      final token = ref.read(authControllerProvider.notifier).token;
+      await _inventoryRepo.updateItemFieldsAtomic(
+        itemId: _item.itemId!,
+        token: token,
+        location: locationController.text.trim(),
+        condition: condition,
+        ownershipStatus: ownership,
+        notes: notesController.text.trim(),
+        logDetails: 'تعديل بيانات أساسية من صفحة تفاصيل القطعة',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('تم الحفظ')));
+      }
+      await _load();
+    } catch (e, st) {
+      AppLogger.logError('InventoryItemDetailScreen._editBasicFields', e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
+        );
+      }
     }
-    _load();
   }
 
   /// تعديل رقم القطعة/السريال — بيعدي على نظام الموافقة زي باقي
@@ -395,12 +427,12 @@ class _InventoryItemDetailScreenState
                 if (_fieldVisible('dispatch_button'))
                   available
                       ? ElevatedButton.icon(
-                          onPressed: _dispatch,
+                          onPressed: _dispatching ? null : _dispatch,
                           icon: const Icon(Icons.outbox),
                           label: const Text('صرف'),
                         )
                       : ElevatedButton.icon(
-                          onPressed: _returnToStock,
+                          onPressed: _dispatching ? null : _returnToStock,
                           icon: const Icon(Icons.undo),
                           style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
                           label: const Text('استرجاع للمخزون'),

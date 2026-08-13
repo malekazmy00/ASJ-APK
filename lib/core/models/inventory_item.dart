@@ -1,8 +1,19 @@
+import 'enums.dart';
+
 /// يطابق core/models.py -> InventoryItem (جدول inventory_items)
 /// + الأعمدة الجديدة (راجع migrations/002 و003).
 /// ملاحظة: الاسم الكودي/موديل القطعة نفسها (part_model) مش هنا — هو
 /// صفة لنوع القطعة زي البراند بالظبط، فمكانه specs_knowledge_base
 /// (راجع KnowledgeBaseEntry.partModel) مش هنا.
+///
+/// TASK-321 (تطبيع تدريجي): الحقول الأساسية (status/condition/
+/// ownershipStatus/entryType) لسه String في القاعدة نفسها (زي ما هي —
+/// من غير أي migration)، لكن بقى فيه getters مكتوبة (statusEnum...)
+/// بتحوّلها لـ enum جاهزة (نفس enums.dart المستخدمة في باقي المشروع)
+/// عشان كود جديد يقدر يستخدمها بدل المقارنة النصية الخام (status ==
+/// 'Available')، اللي معرّضة لأخطاء إملائية ما بتتمسكش إلا وقت
+/// التشغيل. الحقول الخام فضلت زي ما هي بالظبط — الإضافة دي جنبها، مش
+/// بدل منها، فمفيش أي كود قديم اتأثر.
 class InventoryItem {
   final int? itemId;
   final String itemType;
@@ -37,6 +48,20 @@ class InventoryItem {
     this.createdAt,
     this.updatedAt,
   });
+
+  /// TASK-321: نسخة enum من status — راجع تعليق الكلاس فوق.
+  ItemStatus get statusEnum => ItemStatus.fromDb(status);
+
+  /// TASK-321: نسخة enum من condition (null-safe؛ condition نفسه
+  /// nullable في القاعدة).
+  ItemCondition? get conditionEnum =>
+      condition == null ? null : ItemCondition.fromDb(condition);
+
+  /// TASK-321: نسخة enum من ownershipStatus.
+  OwnershipStatus get ownershipStatusEnum => OwnershipStatus.fromDb(ownershipStatus);
+
+  /// TASK-321: نسخة enum من entryType.
+  EntryType get entryTypeEnum => EntryType.fromDb(entryType);
 
   factory InventoryItem.fromMap(Map<String, dynamic> map) {
     return InventoryItem(

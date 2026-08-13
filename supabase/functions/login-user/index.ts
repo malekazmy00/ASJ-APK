@@ -10,6 +10,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { argon2Verify } from "npm:hash-wasm@4";
+import { signAppToken, type AppRole } from "../_shared/auth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -62,7 +63,16 @@ Deno.serve(async (req) => {
       .eq("username", user.username);
 
     const { password: _omit, ...safeUser } = user;
-    return jsonResponse({ success: true, user: safeUser }, 200);
+
+    // بعد نجاح التحقق فعلياً (Argon2)، نولّد توكن موقّع من السيرفر —
+    // ده اللي هيتحقق منه أي Edge Function حساسة لاحقاً (requireAuth/
+    // requireRole)، بدل ما تثق في أي username جاي في الـ body.
+    const token = await signAppToken({
+      username: user.username,
+      role: (user.role as AppRole) ?? "worker",
+    });
+
+    return jsonResponse({ success: true, user: safeUser, token }, 200);
   } catch (e) {
     console.error(e);
     return jsonResponse({ success: false, error: "خطأ في الخادم" }, 500);

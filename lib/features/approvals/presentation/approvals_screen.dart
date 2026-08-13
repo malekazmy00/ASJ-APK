@@ -39,18 +39,18 @@ class _ApprovalsScreenState extends ConsumerState<ApprovalsScreen> {
   }
 
   Future<void> _resolve(PendingApproval approval, bool approve) async {
-    final username = ref.read(authControllerProvider)?.username;
-    if (username == null || approval.id == null) return;
+    final token = ref.read(authControllerProvider.notifier).token;
+    if (token == null || approval.id == null) return;
 
     setState(() => _resolving.add(approval.id!));
-    final ok = await _repo.resolve(
+    final error = await _repo.resolve(
       approvalId: approval.id!,
       approve: approve,
-      resolvedBy: username,
+      adminToken: token,
     );
     if (mounted) {
       setState(() => _resolving.remove(approval.id!));
-      if (ok) {
+      if (error == null) {
         setState(() => _pending.removeWhere((a) => a.id == approval.id));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -60,7 +60,7 @@ class _ApprovalsScreenState extends ConsumerState<ApprovalsScreen> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('فشل تنفيذ الطلب'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(error), backgroundColor: AppColors.danger),
         );
       }
     }

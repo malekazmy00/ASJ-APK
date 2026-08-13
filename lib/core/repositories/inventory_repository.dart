@@ -1,5 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/inventory_group.dart';
 import '../models/inventory_item.dart';
+import '../services/error_messages.dart';
 
 /// يطابق repositories/item_repo.py من النظام الأصلي.
 class InventoryRepository {
@@ -22,6 +24,7 @@ class InventoryRepository {
     final rows = await _client
         .from('inventory_items')
         .select()
+        .neq('status', 'Archived')
         .order('item_id', ascending: false)
         .limit(limit);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
@@ -32,6 +35,7 @@ class InventoryRepository {
         .from('inventory_items')
         .select()
         .eq('part_number', partNumber)
+        .neq('status', 'Archived')
         .order('created_at');
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
@@ -68,6 +72,7 @@ class InventoryRepository {
         .from('inventory_items')
         .select()
         .or(orParts.join(','))
+        .neq('status', 'Archived')
         .order('created_at', ascending: false)
         .limit(100);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
@@ -79,7 +84,7 @@ class InventoryRepository {
     String? searchText,
     int limit = 200,
   }) async {
-    var q = _client.from('inventory_items').select();
+    var q = _client.from('inventory_items').select().neq('status', 'Archived');
     if (status != null && status.isNotEmpty) {
       q = q.eq('status', status);
     }
@@ -129,6 +134,7 @@ class InventoryRepository {
         .from('inventory_items')
         .select('part_number, description')
         .or('part_number.ilike.%$trimmed%,description.ilike.%$trimmed%')
+        .neq('status', 'Archived')
         .limit(limit * 3);
     for (final r in itemRows as List) {
       if (results.length >= limit) break;
@@ -178,7 +184,7 @@ class InventoryRepository {
   /// المجموعة). القيم الافتراضية (من غير أي بارامتر) بترجع نفس
   /// السلوك القديم بالظبط، عشان الشاشات التانية اللي بتنادي
   /// getGroupedInventory() من غير فلاتر (Batch B) تفضل شغالة زي ما هي.
-  Future<List<Map<String, dynamic>>> getGroupedInventory({
+  Future<List<InventoryGroup>> getGroupedInventory({
     String? presence,
     String? ownershipStatus,
     String? entryType,
@@ -186,7 +192,98 @@ class InventoryRepository {
     String sortField = 'total_count',
     bool ascending = false,
   }) async {
-    var q = _client.from('inventory_items').select();
+    // TASK-315: التجميع بقى بيتحسب في الداتابيز (SQL) في الحالة
+    // الأساسية — بيرجع عدد "المجموعات" بس، مش كل القطع الفردية، مهما
+    // كان حجم المخزون. فلترة سبب الصرف (exit_type) لسه بمسارها القديم
+    // في Dart (محتاجة join مع transactions_log، حالة أضيق استخداماً).
+    // شكل النتيجة والترتيب النهائي زي ما هو بالظبط في الحالتين.
+    final rawResult = (presence == 'dispatched' && exitType != null)
+        ? await _getGroupedInventoryLegacy(
+            presence: presence,
+            ownershipStatus: ownershipStatus,
+            entryType: entryType,
+            exitType: exitType,
+          )
+        : await _getGroupedInventoryViaRpc(
+            presence: presence,
+            ownershipStatus: ownershipStatus,
+            entryType: entryType,
+          );
+
+    // TASK-320: تحويل لموديل مكتوب (InventoryGroup) بدل ما نفضل شغالين
+    // على Map خام لحد الشاشة — نفس البيانات بالظبط.
+    final groups = rawResult.map(InventoryGroup.fromMap).toList();
+
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+    int cmp(InventoryGroup a, InventoryGroup b) {
+      switch (sortField) {
+        case 'part_number':
+          return a.displayName.compareTo(b.displayName);
+        case 'item_id':
+          return (a.minItemId ?? 0).compareTo(b.minItemId ?? 0);
+        case 'item_type':
+          return (a.itemType ?? '').compareTo(b.itemType ?? '');
+        case 'created_at':
+          return (a.minCreatedAt ?? epoch).compareTo(b.minCreatedAt ?? epoch);
+        case 'updated_at':
+          return (a.maxUpdatedAt ?? epoch).compareTo(b.maxUpdatedAt ?? epoch);
+        default:
+          return a.totalCount.compareTo(b.totalCount);
+      }
+    }
+
+    groups.sort((a, b) => ascending ? cmp(a, b) : cmp(b, a));
+    return groups;
+  }
+
+  /// TASK-315: نداء RPC واحد بيرجع المجموعات جاهزة (group_key,
+  /// display_name, item_type, brand, has_part_number, total_count,
+  /// available_count, min_item_id, min_created_at, max_updated_at) —
+  /// نفس المفاتيح والأنواع بالظبط اللي كان بيرجّعها المسار القديم في
+  /// Dart، عشان الشاشات المستهلكة (تبويب المخزون، تبويب البحث) تفضل
+  /// شغالة من غير أي تعديل فيها. راجع migrations/011_grouped_inventory_rpc.sql.
+  Future<List<Map<String, dynamic>>> _getGroupedInventoryViaRpc({
+    String? presence,
+    String? ownershipStatus,
+    String? entryType,
+  }) async {
+    final rows = await _client.rpc('get_grouped_inventory', params: {
+      'p_presence': presence,
+      'p_ownership_status': ownershipStatus,
+      'p_entry_type': entryType,
+    });
+    return (rows as List).map<Map<String, dynamic>>((r) {
+      final map = r as Map<String, dynamic>;
+      return {
+        'group_key': map['group_key'],
+        'display_name': map['display_name'],
+        'item_type': map['item_type'],
+        'brand': map['brand'],
+        'has_part_number': map['has_part_number'] as bool? ?? false,
+        'total_count': (map['total_count'] as num).toInt(),
+        'available_count': (map['available_count'] as num).toInt(),
+        'min_item_id': map['min_item_id'] as int?,
+        'min_created_at': map['min_created_at'] != null
+            ? DateTime.tryParse(map['min_created_at'].toString())
+            : null,
+        'max_updated_at': map['max_updated_at'] != null
+            ? DateTime.tryParse(map['max_updated_at'].toString())
+            : null,
+      };
+    }).toList();
+  }
+
+  /// المسار القديم (تجميع في Dart) — لسه مستخدم بس لحالة فلترة سبب
+  /// الصرف (exit_type)، اللي محتاجة join مع transactions_log. نفس
+  /// الكود اللي كان شغال قبل TASK-315 بالظبط، من غير أي تغيير في
+  /// المنطق (بس من غير الـ sort الأخير، اللي بقى مركزي في الدالة الأم).
+  Future<List<Map<String, dynamic>>> _getGroupedInventoryLegacy({
+    String? presence,
+    String? ownershipStatus,
+    String? entryType,
+    String? exitType,
+  }) async {
+    var q = _client.from('inventory_items').select().neq('status', 'Archived');
     if (presence == 'available') {
       q = q.neq('status', 'Out');
       if (ownershipStatus != null) q = q.eq('ownership_status', ownershipStatus);
@@ -288,32 +385,7 @@ class InventoryRepository {
       }
     }
 
-    final result = groups.values.toList();
-    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
-    int cmp(Map<String, dynamic> a, Map<String, dynamic> b) {
-      switch (sortField) {
-        case 'part_number':
-          return (a['display_name'] as String)
-              .compareTo(b['display_name'] as String);
-        case 'item_id':
-          return ((a['min_item_id'] as int?) ?? 0)
-              .compareTo((b['min_item_id'] as int?) ?? 0);
-        case 'item_type':
-          return (a['item_type'] as String? ?? '')
-              .compareTo(b['item_type'] as String? ?? '');
-        case 'created_at':
-          return ((a['min_created_at'] as DateTime?) ?? epoch)
-              .compareTo((b['min_created_at'] as DateTime?) ?? epoch);
-        case 'updated_at':
-          return ((a['max_updated_at'] as DateTime?) ?? epoch)
-              .compareTo((b['max_updated_at'] as DateTime?) ?? epoch);
-        default:
-          return (a['total_count'] as int).compareTo(b['total_count'] as int);
-      }
-    }
-
-    result.sort((a, b) => ascending ? cmp(a, b) : cmp(b, a));
-    return result;
+    return groups.values.toList();
   }
 
   /// نفس فلاتر getGroupedInventory بالظبط، لكن من غير تجميع — كل قطعة
@@ -329,7 +401,7 @@ class InventoryRepository {
     String sortField = 'item_id',
     bool ascending = false,
   }) async {
-    var q = _client.from('inventory_items').select();
+    var q = _client.from('inventory_items').select().neq('status', 'Archived');
     if (presence == 'available') {
       q = q.neq('status', 'Out');
       if (ownershipStatus != null) q = q.eq('ownership_status', ownershipStatus);
@@ -399,6 +471,7 @@ class InventoryRepository {
           .from('inventory_items')
           .select()
           .or('description.is.null,description.eq.')
+          .neq('status', 'Archived')
           .order('created_at', ascending: false);
       return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
     }
@@ -406,6 +479,7 @@ class InventoryRepository {
         .from('inventory_items')
         .select()
         .eq('description', desc)
+        .neq('status', 'Archived')
         .order('created_at', ascending: false);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
@@ -415,7 +489,7 @@ class InventoryRepository {
   /// اللي بيحسب التجميع مباشرة من الجدول، وبيغطي حالة القطع من غير
   /// رقم قطعة كمان (كانت الـ View القديمة بتغطي رقم القطعة بس).
   @Deprecated('استخدم getGroupedInventory بدل ده')
-  Future<List<Map<String, dynamic>>> getGroupedByPartNumber() =>
+  Future<List<InventoryGroup>> getGroupedByPartNumber() =>
       getGroupedInventory();
 
   Future<List<InventoryItem>> bulkInsert(List<InventoryItem> items) async {
@@ -426,6 +500,54 @@ class InventoryRepository {
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
 
+  /// TASK-304 + TASK-305: تسجيل قطعة جديدة كوحدة واحدة ذرية (إدراج
+  /// القطعة + تحديث قاعدة المعرفة + الـ audit log + الإشعار) عبر RPC
+  /// واحدة في Postgres (راجع migrations/008_atomic_inventory_insert.sql)
+  /// بدل 4-5 نداءات منفصلة من هنا — لو أي جزء فشل، كل حاجة بترجع
+  /// (rollback) تلقائياً، فمفيش احتمال قطعة تتسجل من غير سجل حركة أو
+  /// إشعار ناقص. استُخدمت بدل bulkInsert في شاشة تسجيل قطعة (العامل).
+  ///
+  /// TASK-401: الـ RPC نفسها بقت ممنوعة تتنادى مباشرة من anon (راجع
+  /// 012_secure_atomic_insert_rpc.sql) — النداء بقى عبر Edge Function
+  /// `create-inventory-item` اللي بتتحقق من التوكن الأول، عشان
+  /// طبقة الـ Authorization اللي بنيناها للعمليات الحساسة تتطبق هنا
+  /// كمان، مش بس على admin functions.
+  Future<InventoryItem> createItemAtomic({
+    required InventoryItem item,
+    required String username,
+    required String? token,
+    String? geminiInsights,
+    String? partModel,
+    required String logDetails,
+    String? notifMessage,
+  }) async {
+    final response = await _client.functions.invoke('create-inventory-item',
+        body: {
+          'itemType': item.itemType,
+          'partNumber': item.partNumber,
+          'description': item.description,
+          'notes': item.notes,
+          'entryType': item.entryType,
+          'location': item.location,
+          'condition': item.condition,
+          'serialNumber': item.serialNumber,
+          'ownershipStatus': item.ownershipStatus,
+          'geminiInsights': geminiInsights,
+          'partModel': partModel,
+          'logDetails': logDetails,
+          'notifMessage': notifMessage,
+        },
+        headers: token != null ? {'x-app-token': token} : null);
+
+    final data = response.data as Map<String, dynamic>?;
+    if (data?['success'] != true) {
+      final msg = data?['error']?.toString() ?? 'فشل حفظ القطعة';
+      if (data?['businessError'] == true) throw BusinessException(msg);
+      throw Exception(msg);
+    }
+    return InventoryItem.fromMap(data!['item'] as Map<String, dynamic>);
+  }
+
   Future<void> updateStatus(int itemId, String status) async {
     await _client
         .from('inventory_items')
@@ -433,12 +555,135 @@ class InventoryRepository {
         .eq('item_id', itemId);
   }
 
+  /// راجع migrations/013_dispatch_return_atomic.sql — نفس فلسفة
+  /// createItemAtomic: صرف القطعة (سجل الحركة + تغيير الحالة + الإشعار)
+  /// بقى transaction ذرية واحدة، عبر Edge Function `dispatch-item` اللي
+  /// بتتحقق من التوكن الأول (نفس نمط TASK-401). details/exitType
+  /// بتتبني في الشاشة المستدعية زي ما كانت بالظبط — مفيش تغيير في شكل
+  /// الرسالة المسجّلة.
+  Future<InventoryItem> dispatchItem({
+    required int itemId,
+    required String? token,
+    required String details,
+    required String exitType,
+    String? notifMessage,
+  }) async {
+    final response = await _client.functions.invoke('dispatch-item',
+        body: {
+          'itemId': itemId,
+          'details': details,
+          'exitType': exitType,
+          'notifMessage': notifMessage,
+        },
+        headers: token != null ? {'x-app-token': token} : null);
+    final data = response.data as Map<String, dynamic>?;
+    if (data?['success'] != true) {
+      final msg = data?['error']?.toString() ?? 'فشل تسجيل الصرف';
+      if (data?['businessError'] == true) throw BusinessException(msg);
+      throw Exception(msg);
+    }
+    return InventoryItem.fromMap(data!['item'] as Map<String, dynamic>);
+  }
+
+  /// نفس فلسفة dispatchItem بالظبط، لعملية الاسترجاع.
+  Future<InventoryItem> returnItem({
+    required int itemId,
+    required String? token,
+    required String details,
+    String? notifMessage,
+  }) async {
+    final response = await _client.functions.invoke('return-item',
+        body: {
+          'itemId': itemId,
+          'details': details,
+          'notifMessage': notifMessage,
+        },
+        headers: token != null ? {'x-app-token': token} : null);
+    final data = response.data as Map<String, dynamic>?;
+    if (data?['success'] != true) {
+      final msg = data?['error']?.toString() ?? 'فشل تسجيل الاسترجاع';
+      if (data?['businessError'] == true) throw BusinessException(msg);
+      throw Exception(msg);
+    }
+    return InventoryItem.fromMap(data!['item'] as Map<String, dynamic>);
+  }
+
   Future<void> updateFields(int itemId, Map<String, dynamic> fields) async {
     fields['updated_at'] = DateTime.now().toIso8601String();
     await _client.from('inventory_items').update(fields).eq('item_id', itemId);
   }
 
-  Future<void> deletePermanently(int itemId) async {
-    await _client.from('inventory_items').delete().eq('item_id', itemId);
+  /// راجع migrations/014_update_fields_atomic.sql. بديل آمن ومُدقّق
+  /// لـ updateFields للحقول الأساسية (موقع/حالة فنية/حالة ملكية،
+  /// واختيارياً حالة القطعة/ملاحظات/سريال) — بيعدي على Edge Function
+  /// `update-item-fields` اللي بتتحقق من التوكن **وكمان** من صلاحية
+  /// can_edit فعلياً على السيرفر (مش بس شرط إظهار الزرار في الواجهة).
+  /// كل شاشة بتبعت بس الحقول اللي بتديرها فعلاً (نفس الفروق الموجودة
+  /// بالفعل بين الشاشتين، محفوظة زي ما هي).
+  Future<InventoryItem> updateItemFieldsAtomic({
+    required int itemId,
+    required String? token,
+    required String? location,
+    required String condition,
+    required String ownershipStatus,
+    String? status,
+    String? notes,
+    String? serialNumber,
+    required String logDetails,
+  }) async {
+    final response = await _client.functions.invoke('update-item-fields',
+        body: {
+          'itemId': itemId,
+          'location': location,
+          'condition': condition,
+          'ownershipStatus': ownershipStatus,
+          if (status != null) 'status': status,
+          'updateStatus': status != null,
+          if (notes != null) 'notes': notes,
+          'updateNotes': notes != null,
+          if (serialNumber != null) 'serialNumber': serialNumber,
+          'updateSerial': serialNumber != null,
+          'logDetails': logDetails,
+        },
+        headers: token != null ? {'x-app-token': token} : null);
+    final data = response.data as Map<String, dynamic>?;
+    if (data?['success'] != true) {
+      final msg = data?['error']?.toString() ?? 'فشل حفظ التعديل';
+      if (data?['businessError'] == true) throw BusinessException(msg);
+      throw Exception(msg);
+    }
+    return InventoryItem.fromMap(data!['item'] as Map<String, dynamic>);
+  }
+
+  /// TASK-306: اتشال الـ hard delete من التطبيق نهائياً. بدل ما نمسح
+  /// الصف فعلياً (وبالتالي نفقد التاريخ/الـ audit/traceability بتاعته
+  /// للأبد)، بنعمل أرشفة قابلة للتراجع: status يبقى 'Archived' +
+  /// deleted_at/deleted_by/delete_reason. القطعة تختفي من كل شاشات
+  /// التصفح العادية (getAll/smartSearch/getFiltered/...، كلها بقت
+  /// بتستبعد Archived) لكن بيانتها وتاريخها لسه موجودين في الداتابيز
+  /// لو احتجنا نرجع لها أو نحقق في حاجة لاحقاً.
+  ///
+  /// الحذف النهائي الحقيقي (DELETE FROM) بقى عملية صيانة قاعدة بيانات
+  /// بحتة تتم يدوياً على Supabase SQL Editor لو ولما احتجناها فعلاً —
+  /// مش حاجة متاحة من التطبيق.
+  ///
+  /// آخر نقطة من مصفوفة SECURITY.md: بقت atomic (تحديث + سجل حركة مع
+  /// بعض) ومتحقق منها فعلياً على السيرفر (can_edit/admin) عبر Edge
+  /// Function `archive-item` — مش نداء مباشر على الجدول بمفتاح anon.
+  Future<InventoryItem> archiveItem(
+    int itemId, {
+    required String? token,
+    required String reason,
+  }) async {
+    final response = await _client.functions.invoke('archive-item',
+        body: {'itemId': itemId, 'reason': reason},
+        headers: token != null ? {'x-app-token': token} : null);
+    final data = response.data as Map<String, dynamic>?;
+    if (data?['success'] != true) {
+      final msg = data?['error']?.toString() ?? 'فشلت الأرشفة';
+      if (data?['businessError'] == true) throw BusinessException(msg);
+      throw Exception(msg);
+    }
+    return InventoryItem.fromMap(data!['item'] as Map<String, dynamic>);
   }
 }

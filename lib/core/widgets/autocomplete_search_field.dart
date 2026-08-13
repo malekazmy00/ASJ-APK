@@ -53,6 +53,12 @@ class _AutocompleteSearchFieldState extends State<AutocompleteSearchField> {
   Timer? _debounceTimer;
   List<String> _suggestions = [];
   bool _loading = false;
+  // TASK-317: لو المستخدم كتب حرفين بسرعة وكل واحد استنى الـ debounce
+  // كامل (يعني نداءين فعليين اتبعتوا)، مفيش ضمان إن الأول يرجع رده
+  // قبل التاني — لو الأول (الأقدم فعلياً) رجع بعد التاني، كان بيدهس
+  // نتايج التاني الأحدث والأصح بنتايج قديمة. كل نداء بياخد رقم جيل
+  // خاص بيه، وبنتجاهل أي رد وصل بعد ما جيل أحدث منه اتبعت خلاص.
+  int _requestGeneration = 0;
 
   @override
   void dispose() {
@@ -65,13 +71,16 @@ class _AutocompleteSearchFieldState extends State<AutocompleteSearchField> {
   void _onChanged(String value) {
     _debounceTimer?.cancel();
     if (value.trim().isEmpty) {
+      _requestGeneration++;
       setState(() => _suggestions = []);
       return;
     }
     _debounceTimer = Timer(widget.debounce, () async {
+      final myGeneration = ++_requestGeneration;
       setState(() => _loading = true);
       final results = await widget.fetchSuggestions(value);
-      if (mounted) {
+      // لو جيل تاني أحدث اتبعت من بعدنا، الرد ده بقى قديم — نتجاهله.
+      if (mounted && myGeneration == _requestGeneration) {
         setState(() {
           _suggestions = results;
           _loading = false;

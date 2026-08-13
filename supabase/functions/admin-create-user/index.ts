@@ -6,13 +6,18 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { argon2id } from "npm:hash-wasm@4";
+import { requireRole, authErrorResponse } from "../_shared/auth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
   try {
-    const { username, password, role, can_export, can_track, can_edit, createdBy } =
+    // TASK-301: صلاحية الأدمن بتتحقق هنا فعلياً دلوقتي — مش افتراض.
+    // أي مستدعي مش معاه توكن admin صالح بياخد 401/403 قبل أي تنفيذ.
+    const admin = await requireRole(req, "admin");
+
+    const { username, password, role, can_export, can_track, can_edit } =
       await req.json();
 
     if (!username || !password || !role) {
@@ -20,11 +25,6 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
-
-    // ملاحظة: لازم صلاحية الأدمن تتحقق هنا فعلياً (مثلاً عبر تمرير توكن
-    // الجلسة والتأكد إن صاحبها role=admin) قبل تنفيذ أي إنشاء —
-    // حالياً هذه الدالة تفترض إنها بتتنادى بس من واجهة الأدمن، ويُفضّل
-    // تشديدها بفحص صريح عند التنفيذ الفعلي.
 
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const passwordHash = await argon2id({
@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
       can_track: can_track ?? false,
       can_edit: can_edit ?? false,
       status: "Active",
-      created_by: createdBy ?? null,
+      created_by: admin.username,
     });
 
     if (error) {
@@ -54,8 +54,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ success: true }, 200);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: "خطأ في الخادم" }, 500);
+    return authErrorResponse(e);
   }
 });
 

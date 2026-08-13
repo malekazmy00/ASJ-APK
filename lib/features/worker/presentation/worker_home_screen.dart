@@ -8,10 +8,10 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
-import '../../../core/repositories/knowledge_base_repository.dart';
-import '../../../core/repositories/log_repository.dart';
-import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/ai_result_sanitizer.dart';
+import '../../../core/services/error_messages.dart';
 import '../../../core/widgets/barcode_scanner_page.dart';
 import '../../auth/presentation/auth_providers.dart';
 
@@ -52,9 +52,6 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
   XFile? _pickedImage;
 
   final _inventoryRepo = InventoryRepository();
-  final _knowledgeRepo = KnowledgeBaseRepository();
-  final _logRepo = LogRepository();
-  final _notifRepo = NotificationRepository();
   final _fieldRepo = FieldPermissionsRepository();
   Map<String, bool> _fieldOverrides = {};
 
@@ -139,9 +136,11 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         requestBody['imageBase64'] = imageBase64;
       }
 
+      final token = ref.read(authControllerProvider.notifier).token;
       final response = await Supabase.instance.client.functions.invoke(
         'analyze-part',
         body: requestBody,
+        headers: token != null ? {'x-app-token': token} : null,
       );
 
       final data = response.data;
@@ -151,27 +150,32 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         return;
       }
 
-      final result = Map<String, dynamic>.from(data['result'] as Map);
+      final rawResult = Map<String, dynamic>.from(data['result'] as Map);
+      final sanitized = AiResultSanitizer.sanitize(rawResult);
       setState(() {
-        _aiResult = result;
-        _partNumberField.text = result['Part_Number'] ?? '';
-        _partModelField.text = result['Part_Model'] ?? '';
-        _serialField.text = result['Serial_Number'] ?? '';
-        _brandField.text = result['Brand'] ?? '';
-        _categoryField.text = result['Category'] ?? '';
-        _compatibleModelField.text = result['Compatible_Model'] ?? '';
-        _additionalCompatField.text = result['Additional_Compatibility'] ?? '';
-        _marketValueField.text = result['Market_Value'] ?? '';
-        _notesField.text = result['Gemini_Insights'] ?? '';
+        _aiResult = rawResult;
+        _partNumberField.text = sanitized.values['Part_Number']!;
+        _partModelField.text = sanitized.values['Part_Model']!;
+        _serialField.text = sanitized.values['Serial_Number']!;
+        _brandField.text = sanitized.values['Brand']!;
+        _categoryField.text = sanitized.values['Category']!;
+        _compatibleModelField.text = sanitized.values['Compatible_Model']!;
+        _additionalCompatField.text = sanitized.values['Additional_Compatibility']!;
+        _marketValueField.text = sanitized.values['Market_Value']!;
+        _notesField.text = sanitized.values['Gemini_Insights']!;
         // اختيار نوع القطعة تلقائي من التحليل — بصمت تماماً، مفيش
         // دروب داون للعامل يشوفه أو يغيّره خالص.
-        final suggestedType = result['Item_Type'] as String?;
+        final suggestedType = rawResult['Item_Type'] as String?;
         if (suggestedType != null && defaultItemTypes.contains(suggestedType)) {
           _itemType = suggestedType;
         }
       });
-    } catch (e) {
-      _showSnack('خطأ في الاتصال بخدمة التحليل: $e', isError: true);
+      if (sanitized.warnings.isNotEmpty) {
+        _showSnack(sanitized.warnings.join(' • '));
+      }
+    } catch (e, st) {
+      AppLogger.logError('WorkerBody._analyze', e, st);
+      _showSnack(friendlyErrorMessage(e), isError: true);
     } finally {
       if (mounted) setState(() => _isAnalyzing = false);
     }
@@ -236,35 +240,32 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         ownershipStatus: _ownership.dbValue,
       );
 
-      final saved = await _inventoryRepo.bulkInsert([item]);
+      final logDetails = '${isEquipment ? 'إضافة معدة' : 'إضافة قطعة'} '
+          '${item.itemType} - $partNumber (${_ownership.arabicLabel})';
+      final hasInsights = hasPartNumber &&
+          partNumber != 'PENDING' &&
+          _notesField.text.trim().isNotEmpty;
+      final hasModel = hasPartNumber &&
+          partNumber != 'PENDING' &&
+          _partModelField.text.trim().isNotEmpty;
 
-      if (hasPartNumber && partNumber != 'PENDING') {
-        await _knowledgeRepo.createOrAppendInsight(
-          partNumber: partNumber,
-          geminiInsights: _notesField.text.trim(),
-        );
-        await _knowledgeRepo.setPartModelIfEmpty(partNumber, _partModelField.text.trim());
-      }
-
-      for (final saved1 in saved) {
-        if (saved1.itemId != null) {
-          await _logRepo.logAction(
-            itemId: saved1.itemId,
-            actionType: ActionType.insert,
-            username: username,
-            details: '${isEquipment ? 'إضافة معدة' : 'إضافة قطعة'} ${saved1.itemType} - '
-                '$partNumber (${_ownership.arabicLabel})',
-          );
-        }
-      }
-      if (saved.isNotEmpty) {
-        await _notifRepo.create(
-          notifType: NotificationEventType.partEntry.dbValue,
-          message: '$username سجّل ${isEquipment ? 'معدة' : 'قطعة'} جديدة: '
-              '${saved.first.itemType} — #${saved.first.itemId}',
-          relatedId: saved.first.itemId,
-        );
-      }
+      // TASK-304 + TASK-305: كانت هنا 4-5 نداءات متتالية منفصلة
+      // (bulkInsert ثم KB ثم log ثم notification) — أي فشل نص الطريق
+      // كان يسيب القطعة متسجلة من غير audit/KB/إشعار. بقت كلها
+      // transaction واحدة ذرية في الداتابيز (راجع InventoryRepository
+      // .createItemAtomic + migrations/008_atomic_inventory_insert.sql).
+      final token = ref.read(authControllerProvider.notifier).token;
+      final savedItem = await _inventoryRepo.createItemAtomic(
+        item: item,
+        username: username,
+        token: token,
+        geminiInsights: hasInsights ? _notesField.text.trim() : null,
+        partModel: hasModel ? _partModelField.text.trim() : null,
+        logDetails: logDetails,
+        notifMessage: '$username سجّل ${isEquipment ? 'معدة' : 'قطعة'} جديدة: '
+            '${item.itemType} — #{item_id}',
+      );
+      final saved = [savedItem];
 
       setState(() {
         _lastSavedIds = saved.map((e) => e.itemId!).toList();
@@ -279,8 +280,9 @@ class _WorkerBodyState extends ConsumerState<WorkerBody> {
         _equipmentTypeController.clear();
       });
       _showSnack('تم الحفظ بنجاح');
-    } catch (e) {
-      _showSnack('فشل الحفظ: $e', isError: true);
+    } catch (e, st) {
+      AppLogger.logError('WorkerBody._save', e, st);
+      _showSnack(friendlyErrorMessage(e), isError: true);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

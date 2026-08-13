@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// "حسابي" — متاحة لأي دور (عكس شاشة إعدادات الأدمن اللي فيها نفس
@@ -39,33 +41,41 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
       return;
     }
     final username = ref.read(authControllerProvider)?.username;
-    if (username == null) return;
+    final token = ref.read(authControllerProvider.notifier).token;
+    if (username == null || token == null) return;
 
     setState(() => _changing = true);
     try {
       final response = await Supabase.instance.client.functions.invoke(
         'change-password',
         body: {
-          'username': username,
           'oldPassword': _oldPasswordController.text,
           'newPassword': _newPasswordController.text,
         },
+        headers: {'x-app-token': token},
       );
       final data = response.data as Map<String, dynamic>?;
       if (data?['success'] == true) {
         _oldPasswordController.clear();
         _newPasswordController.clear();
         _confirmPasswordController.clear();
-        _showSnack('تم تغيير كلمة المرور بنجاح');
         await _notifRepo.create(
           notifType: NotificationEventType.selfPasswordChange.dbValue,
           message: '$username غيّر كلمة المرور الشخصية',
         );
+        if (!mounted) return;
+        // TASK-309: تغيير الباسورد بيلغي صلاحية أي توكن قديم على
+        // السيرفر — بما فيه توكن الجهاز الحالي نفسه. لازم تسجيل دخول
+        // جديد فعلي بالباسورد الجديدة عشان ياخد توكن صالح.
+        _showSnack('تم تغيير كلمة المرور — سجّل دخول تاني بالباسورد الجديدة');
+        await ref.read(authControllerProvider.notifier).logout();
+        return;
       } else {
         _showSnack(data?['error']?.toString() ?? 'فشل التغيير', isError: true);
       }
-    } catch (e) {
-      _showSnack('خطأ في الاتصال بالخادم', isError: true);
+    } catch (e, st) {
+      AppLogger.logError('MyAccountScreen._changePassword', e, st);
+      _showSnack(friendlyErrorMessage(e), isError: true);
     } finally {
       if (mounted) setState(() => _changing = false);
     }

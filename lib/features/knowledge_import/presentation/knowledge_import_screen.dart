@@ -8,6 +8,8 @@ import '../../../core/models/enums.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// استيراد قاعدة المعرفة الفنية (specs_knowledge_base) من ملف CSV —
@@ -160,9 +162,10 @@ class _KnowledgeImportScreenState extends ConsumerState<KnowledgeImportScreen> {
         _submitted = true;
         _loading = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.logError('KnowledgeImportScreen._prepareRequest', e, st);
       setState(() {
-        _error = 'فشل تجهيز الطلب: $e';
+        _error = friendlyErrorMessage(e);
         _loading = false;
       });
     }

@@ -9,15 +9,21 @@
 // إشعار تاني، بنفس منطق NotificationRepository.create في الـ Flutter.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireRole, authErrorResponse } from "../_shared/auth.ts";
+import { rpcErrorResponse } from "../_shared/errors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
   try {
-    const { approvalId, action, resolvedBy } = await req.json();
+    // TASK-301: بس الأدمن يقدر يوافق/يرفض طلب معلّق. resolvedBy
+    // بقت من التوكن الموقّع مش من الـ body.
+    const admin = await requireRole(req, "admin");
+    const resolvedBy = admin.username;
+    const { approvalId, action } = await req.json();
 
-    if (!approvalId || !action || !resolvedBy) {
+    if (!approvalId || !action) {
       return jsonResponse({ success: false, error: "بيانات ناقصة" }, 400);
     }
     if (action !== "approve" && action !== "reject") {
@@ -26,24 +32,25 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const { data: approval, error: fetchError } = await supabase
-      .from("pending_approvals")
-      .select("*")
-      .eq("id", approvalId)
-      .maybeSingle();
+    // قبل كده: SELECT بيقرا status، بعدين IF بيتحقق، بعدين UPDATE
+    // منفصلة — ده بالظبط نفس فئة مشكلة Race Condition اللي في
+    // dispatch/return (لو طلبين موافقة/رفض جم في نفس اللحظة على نفس
+    // الطلب، الاتنين كانوا يعدّوا فحص "لسه Pending" وينفذوا). دلوقتي
+    // "المطالبة" بالطلب بقت UPDATE واحدة ذرية بشرط status='Pending'
+    // (راجع claim_pending_approval_tx في
+    // migrations/016_state_transition_guards.sql) — لو حد تاني كسبها
+    // الأول، إحنا هنا هناخد BUSINESS_ERROR ونوقف فوراً.
+    const newStatus = action === "reject" ? "Rejected" : "Approved";
+    const { data: approval, error: claimError } = await supabase.rpc(
+      "claim_pending_approval_tx",
+      { p_approval_id: approvalId, p_new_status: newStatus, p_resolved_by: resolvedBy },
+    );
 
-    if (fetchError || !approval) {
-      return jsonResponse({ success: false, error: "الطلب غير موجود" }, 404);
-    }
-    if (approval.status !== "Pending") {
-      return jsonResponse({ success: false, error: "الطلب ده اتحسم قبل كده" }, 409);
+    if (claimError) {
+      return rpcErrorResponse(claimError);
     }
 
     if (action === "reject") {
-      await supabase
-        .from("pending_approvals")
-        .update({ status: "Rejected", resolved_by: resolvedBy, resolved_at: new Date().toISOString() })
-        .eq("id", approvalId);
       await supabase.from("transactions_log").insert({
         item_id: approval.payload?.itemId ?? null,
         action_type: "USER_MGMT",
@@ -58,7 +65,8 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: true }, 200);
     }
 
-    // action === "approve": نطبّق التغيير الفعلي حسب النوع
+    // action === "approve": نطبّق التغيير الفعلي حسب النوع. الطلب
+    // بقى "بتاعنا" فعلياً بعد المطالبة الناجحة فوق، فمفيش خطر تكرار هنا.
     const payload = approval.payload ?? {};
 
     if (approval.approval_type === "part_number_edit") {
@@ -82,11 +90,6 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: "نوع طلب غير مدعوم" }, 400);
     }
 
-    await supabase
-      .from("pending_approvals")
-      .update({ status: "Approved", resolved_by: resolvedBy, resolved_at: new Date().toISOString() })
-      .eq("id", approvalId);
-
     await supabase.from("transactions_log").insert({
       item_id: payload.itemId ?? null,
       action_type: "USER_MGMT",
@@ -102,8 +105,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ success: true }, 200);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: `خطأ في الخادم: ${e}` }, 500);
+    return authErrorResponse(e);
   }
 });
 

@@ -15,6 +15,9 @@ import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/ai_result_sanitizer.dart';
+import '../../../core/services/error_messages.dart';
 import '../../../core/models/engineer_query.dart';
 import '../../../core/repositories/engineer_query_repository.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
@@ -162,9 +165,11 @@ class _SmartSearchTabState extends ConsumerState<SmartSearchTab> {
 
   Future<void> _runGeminiSearch(String query) async {
     try {
+      final token = ref.read(authControllerProvider.notifier).token;
       final response = await Supabase.instance.client.functions.invoke(
         'search-part',
         body: {'query': query},
+        headers: token != null ? {'x-app-token': token} : null,
       );
       final data = response.data;
       if (data is! Map || data['success'] != true) {
@@ -509,11 +514,26 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
   }
 
   Future<void> _confirmDelete(InventoryItem item) async {
+    final reasonCtrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('تأكيد الحذف'),
-        content: Text('حذف القطعة #${item.itemId} نهائياً؟ لا يمكن التراجع.'),
+        title: const Text('تأكيد الأرشفة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('أرشفة القطعة #${item.itemId}؟ هتختفي من كل شاشات المخزون '
+                'العادية، لكن بياناتها وتاريخها هيفضلوا محفوظين ويمكن '
+                'الرجوع ليها لاحقاً لو لزم الأمر.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonCtrl,
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(labelText: 'سبب الأرشفة (مطلوب)'),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -522,22 +542,37 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('حذف نهائي'),
+            child: const Text('أرشفة'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    final username = ref.read(authControllerProvider)?.username ?? 'unknown';
-    await _logRepo.logAction(
-      itemId: item.itemId,
-      actionType: ActionType.delete,
-      username: username,
-      details: 'حذف نهائي من لوحة التعديل',
-    );
-    await _inventoryRepo.deletePermanently(item.itemId!);
-    _load();
+    final reason = reasonCtrl.text.trim();
+    if (reason.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لازم تكتب سبب الأرشفة')),
+      );
+      return;
+    }
+
+    final token = ref.read(authControllerProvider.notifier).token;
+    // TASK-306: بدل DELETE فعلي (بيانات القطعة كانت بتضيع للأبد)، بقى
+    // أرشفة قابلة للتراجع. بعد المراجعة الأمنية التانية (TASK-401
+    // pattern)، بقت كمان atomic ومتحقق منها فعلياً على السيرفر —
+    // راجع InventoryRepository.archiveItem + supabase/functions/archive-item.
+    try {
+      await _inventoryRepo.archiveItem(item.itemId!, token: token, reason: reason);
+      _load();
+    } catch (e, st) {
+      AppLogger.logError('_EditDashboardTabState._confirmDelete', e, st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
+        );
+      }
+    }
   }
 
   @override
@@ -598,10 +633,11 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
                   ),
                   onTap: () async {
                     final username = ref.read(authControllerProvider)?.username ?? 'unknown';
+                    final token = ref.read(authControllerProvider.notifier).token;
                     await showModalBottomSheet(
                       context: context,
                       isScrollControlled: true,
-                      builder: (context) => _ItemEditSheet(item: item, username: username),
+                      builder: (context) => _ItemEditSheet(item: item, username: username, token: token),
                     );
                     _load();
                   },
@@ -625,9 +661,10 @@ class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
 // ---------------------------------------------------------------------
 
 class _ItemEditSheet extends StatefulWidget {
-  const _ItemEditSheet({required this.item, required this.username});
+  const _ItemEditSheet({required this.item, required this.username, this.token});
   final InventoryItem item;
   final String username;
+  final String? token;
 
   @override
   State<_ItemEditSheet> createState() => _ItemEditSheetState();
@@ -754,6 +791,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
               : 'غير معروف - حلل من الصورة',
           if (imageBase64 != null) 'imageBase64': imageBase64,
         },
+        headers: widget.token != null ? {'x-app-token': widget.token!} : null,
       );
       final data = response.data;
       if (data is! Map || data['success'] != true) {
@@ -765,29 +803,48 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
         }
         return;
       }
-      final result = Map<String, dynamic>.from(data['result'] as Map);
+      final rawResult = Map<String, dynamic>.from(data['result'] as Map);
+      final sanitized = AiResultSanitizer.sanitize(rawResult);
       setState(() {
-        if ((result['Part_Number'] as String? ?? '').isNotEmpty) {
-          _partNumberField.text = result['Part_Number'];
+        if (sanitized.values['Part_Number']!.isNotEmpty) {
+          _partNumberField.text = sanitized.values['Part_Number']!;
         }
-        if ((result['Part_Model'] as String? ?? '').isNotEmpty) {
-          _partModelField.text = result['Part_Model'];
+        if (sanitized.values['Part_Model']!.isNotEmpty) {
+          _partModelField.text = sanitized.values['Part_Model']!;
         }
-        if ((result['Serial_Number'] as String? ?? '').isNotEmpty) {
-          _serialField.text = result['Serial_Number'];
+        if (sanitized.values['Serial_Number']!.isNotEmpty) {
+          _serialField.text = sanitized.values['Serial_Number']!;
         }
-        _brandField.text = result['Brand'] ?? _brandField.text;
-        _categoryField.text = result['Category'] ?? _categoryField.text;
-        _compatibleModelField.text = result['Compatible_Model'] ?? _compatibleModelField.text;
-        _additionalCompatField.text = result['Additional_Compatibility'] ?? _additionalCompatField.text;
-        _marketValueField.text = result['Market_Value'] ?? _marketValueField.text;
-        _insightsField.text = result['Gemini_Insights'] ?? _insightsField.text;
+        _brandField.text = sanitized.values['Brand']!.isNotEmpty
+            ? sanitized.values['Brand']!
+            : _brandField.text;
+        _categoryField.text = sanitized.values['Category']!.isNotEmpty
+            ? sanitized.values['Category']!
+            : _categoryField.text;
+        _compatibleModelField.text = sanitized.values['Compatible_Model']!.isNotEmpty
+            ? sanitized.values['Compatible_Model']!
+            : _compatibleModelField.text;
+        _additionalCompatField.text = sanitized.values['Additional_Compatibility']!.isNotEmpty
+            ? sanitized.values['Additional_Compatibility']!
+            : _additionalCompatField.text;
+        _marketValueField.text = sanitized.values['Market_Value']!.isNotEmpty
+            ? sanitized.values['Market_Value']!
+            : _marketValueField.text;
+        _insightsField.text = sanitized.values['Gemini_Insights']!.isNotEmpty
+            ? sanitized.values['Gemini_Insights']!
+            : _insightsField.text;
         _pickedImage = null;
       });
-    } catch (e) {
+      if (sanitized.warnings.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(sanitized.warnings.join(' • ')), backgroundColor: AppColors.warning),
+        );
+      }
+    } catch (e, st) {
+      AppLogger.logError('_ItemEditSheet._reanalyze', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في التحليل: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
         );
       }
     } finally {
@@ -809,19 +866,15 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
 
       // الحقول العادية بتتحدث فوراً. رقم القطعة والسريال بس، لو
       // اتغيروا، بيروحوا لطلب موافقة الأدمن بدل ما يتحفظوا على طول.
-      await _inventoryRepo.updateFields(widget.item.itemId!, {
-        'location': _locationField.text.trim().isEmpty ? null : _locationField.text.trim(),
-        'condition': _condition.dbValue,
-        'status': _status.dbValue,
-        'ownership_status': _ownership.dbValue,
-        if (!serialChanged) 'serial_number': newSerial.isEmpty ? null : newSerial,
-      });
-
-      await _logRepo.logAction(
-        itemId: widget.item.itemId,
-        actionType: ActionType.update,
-        username: widget.username,
-        details: 'تعديل بيانات القطعة (الموقع/الحالة الفنية/حالة الملكية)',
+      await _inventoryRepo.updateItemFieldsAtomic(
+        itemId: widget.item.itemId!,
+        token: widget.token,
+        location: _locationField.text.trim().isEmpty ? null : _locationField.text.trim(),
+        condition: _condition.dbValue,
+        ownershipStatus: _ownership.dbValue,
+        status: _status.dbValue,
+        serialNumber: !serialChanged ? (newSerial.isEmpty ? null : newSerial) : null,
+        logDetails: 'تعديل بيانات القطعة (الموقع/الحالة الفنية/حالة الملكية)',
       );
 
       final pendingLabels = <String>[];
@@ -889,10 +942,11 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
         }
         Navigator.of(context).pop();
       }
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.logError('_ItemEditSheet._save', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الحفظ: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
         );
       }
     } finally {
@@ -945,25 +999,21 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
 
     setState(() => _saving = true);
     try {
-      await _inventoryRepo.updateStatus(widget.item.itemId!, 'Available');
-      await _logRepo.logAction(
-        itemId: widget.item.itemId,
-        actionType: ActionType.return_,
-        username: widget.username,
-        details: 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy'
-            '${note.isNotEmpty ? ' — ملاحظة: $note' : ''}',
-      );
-      await _notificationRepo.create(
-        notifType: NotificationEventType.returnToStock.dbValue,
-        message: '${widget.username} استرجع القطعة #${widget.item.itemId} '
+      final details = 'تم استرجاع القطعة إلى المخزون — استلمها: $receivedBy'
+          '${note.isNotEmpty ? ' — ملاحظة: $note' : ''}';
+      await _inventoryRepo.returnItem(
+        itemId: widget.item.itemId!,
+        token: widget.token,
+        details: details,
+        notifMessage: '${widget.username} استرجع القطعة #${widget.item.itemId} '
             '(${widget.item.partNumber}) للمخزون',
-        relatedId: widget.item.itemId,
       );
       if (mounted) Navigator.of(context).pop();
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.logError('_ItemEditSheetState._returnToInventory', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الاسترجاع: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
         );
       }
     } finally {

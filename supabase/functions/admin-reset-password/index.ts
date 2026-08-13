@@ -4,18 +4,20 @@
 // لكلمة المرور القديمة (عكس change-password اللي للمستخدم نفسه).
 // نفس منطق الهاش المستخدم في admin-create-user.
 //
-// ملاحظة أمان (نفس ملاحظة admin-create-user بالظبط): الدالة دي
-// بتفترض حالياً إنها بتتنادى من واجهة الأدمن بس، ويُفضّل تشديدها
-// بفحص صريح لصلاحية الأدمن عند التنفيذ الفعلي.
+// TASK-301: صلاحية الأدمن بتتحقق هنا فعلياً دلوقتي (requireRole) —
+// نفس الحل المطبّق في admin-create-user.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { argon2id } from "npm:hash-wasm@4";
+import { requireRole, authErrorResponse } from "../_shared/auth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
   try {
+    const admin = await requireRole(req, "admin");
+
     const { username, newPassword } = await req.json();
 
     if (!username || !newPassword) {
@@ -43,24 +45,27 @@ Deno.serve(async (req) => {
 
     const { error } = await supabase
       .from("users")
-      .update({ password: newHash })
+      .update({ password: newHash, password_changed_at: new Date().toISOString() })
       .eq("username", username);
 
     if (error) {
       return jsonResponse({ success: false, error: error.message }, 400);
     }
 
+    // TASK-309: توكنات المستخدم القديمة (على أي جهاز) بقت مرفوضة
+    // تلقائياً (راجع requireAuth)، وبنقفل سجلات جلساته المفتوحة كمان.
+    await supabase.rpc("revoke_all_sessions", { p_username: username });
+
     await supabase.from("transactions_log").insert({
       item_id: null,
       action_type: "USER_MGMT",
       username,
-      details: "إعادة تعيين كلمة المرور بواسطة الأدمن",
+      details: `إعادة تعيين كلمة المرور بواسطة الأدمن (${admin.username})`,
     });
 
     return jsonResponse({ success: true }, 200);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: "خطأ في الخادم" }, 500);
+    return authErrorResponse(e);
   }
 });
 

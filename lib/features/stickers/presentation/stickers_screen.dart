@@ -6,6 +6,8 @@ import 'package:printing/printing.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
 
 /// معاينة استيكر القطعة (رقم القطعة + Serial لو موجود + كود QR).
@@ -233,10 +235,11 @@ class _StickerPreviewState extends State<_StickerPreview> {
         onLayout: (_) async => doc.save(),
         name: 'استيكر_${item.itemId}',
       );
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.logError('StickersScreen._print', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذرت الطباعة: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
         );
       }
     } finally {

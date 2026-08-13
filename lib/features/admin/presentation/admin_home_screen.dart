@@ -25,6 +25,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
   final _fieldRepo = FieldPermissionsRepository();
   List<AppUser> _users = [];
   bool _loading = true;
+  // TASK-324: الحفظ الفعلي (admin-create-user/admin-reset-password)
+  // بيحصل بعد ما الـ Dialog نفسه يتقفل، مش جواه — فمينفعش نمنع
+  // الـ double-tap بتعطيل زرار جوه Dialog قفل خلاص. الحل هنا: نمنع
+  // فتح Dialog تاني (إنشاء أو تعديل) لحد ما الطلب اللي قبله يخلص.
+  bool _submitting = false;
 
   @override
   void initState() {
@@ -57,6 +62,7 @@ class _UsersTabState extends ConsumerState<UsersTab> {
   }
 
   Future<void> _showAddUserDialog() async {
+    if (_submitting) return;
     final usernameCtrl = TextEditingController();
     final passwordCtrl = TextEditingController();
     String role = 'worker';
@@ -109,15 +115,17 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     );
 
     if (created != true) return;
+    setState(() => _submitting = true);
 
+    final adminToken = ref.read(authControllerProvider.notifier).token;
     final response = await Supabase.instance.client.functions.invoke(
       'admin-create-user',
       body: {
         'username': usernameCtrl.text.trim(),
         'password': passwordCtrl.text,
         'role': role,
-        'createdBy': ref.read(authControllerProvider)?.username,
       },
+      headers: adminToken != null ? {'x-app-token': adminToken} : null,
     );
     final data = response.data as Map<String, dynamic>?;
     if (data?['success'] == true) {
@@ -132,9 +140,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
         SnackBar(content: Text('فشل الإنشاء: ${data?['error'] ?? ''}')),
       );
     }
+    if (mounted) setState(() => _submitting = false);
   }
 
   Future<void> _showEditUserDialog(AppUser user) async {
+    if (_submitting) return;
     String role = user.role.name;
     String status = user.status;
     final newPasswordCtrl = TextEditingController();
@@ -311,6 +321,7 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     );
 
     if (saved != true) return;
+    setState(() => _submitting = true);
 
     if (role != user.role.name) {
       await _userRepo.updateRole(user.username, role);
@@ -319,9 +330,11 @@ class _UsersTabState extends ConsumerState<UsersTab> {
       await _userRepo.updateStatus(user.username, status);
     }
     if (newPasswordCtrl.text.trim().isNotEmpty) {
+      final adminToken = ref.read(authControllerProvider.notifier).token;
       final response = await Supabase.instance.client.functions.invoke(
         'admin-reset-password',
         body: {'username': user.username, 'newPassword': newPasswordCtrl.text.trim()},
+        headers: adminToken != null ? {'x-app-token': adminToken} : null,
       );
       final data = response.data as Map<String, dynamic>?;
       if (data?['success'] == true) {
@@ -386,13 +399,14 @@ class _UsersTabState extends ConsumerState<UsersTab> {
     }
 
     _load();
+    if (mounted) setState(() => _submitting = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddUserDialog,
+        onPressed: _submitting ? null : _showAddUserDialog,
         icon: const Icon(Icons.person_add_alt),
         label: const Text('مستخدم جديد'),
         backgroundColor: AppColors.roleAdmin,
@@ -406,7 +420,7 @@ class _UsersTabState extends ConsumerState<UsersTab> {
                 final user = _users[index];
                 return Card(
                   child: InkWell(
-                    onTap: () => _showEditUserDialog(user),
+                    onTap: _submitting ? null : () => _showEditUserDialog(user),
                     child: Padding(
                       padding: const EdgeInsets.all(12),
                       child: Column(

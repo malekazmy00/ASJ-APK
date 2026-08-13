@@ -1,5 +1,6 @@
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/app_logger.dart';
 
 /// الجولة الثالثة (نقطة ٢٢) — إجبار التحديث: يقارن نسخة التطبيق
 /// المثبتة بأقل نسخة مسموح بيها، المخزّنة في جدول app_config على
@@ -37,7 +38,8 @@ class AppVersionRepository {
 
       final info = await PackageInfo.fromPlatform();
       return _isOlder(info.version, minVersion.trim());
-    } catch (_) {
+    } catch (e, st) {
+      AppLogger.logError('AppVersionRepository.isUpdateRequired', e, st);
       return false;
     }
   }

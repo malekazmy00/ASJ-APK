@@ -4,9 +4,26 @@
 // GEMINI_API_KEY_3 - كلهم اختياريين عدا الأول). بيجرب كل نموذج مع كل
 // مفتاح بالترتيب قبل ما يصعّد للنموذج الأقوى اللي بعده، عشان لو مفتاح
 // واحد خلصت حصته أو فيه مشكلة فيه، الباقي يكمل الشغل من غيره.
+//
+// TASK-319: قبل كده الدالة دي كانت مفتوحة تماماً — أي حد معاه الـ
+// anon key يقدر يستدعيها بدون حد، ويستهلك حصة Gemini (مدفوعة أو
+// محدودة) من غير أي تحقق هوية أصلاً. دلوقتي محتاجة توكن صالح
+// (requireAuth) ومحكومة بحد أقصى نداءات/دقيقة و/يوم لكل مستخدم.
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireAuth, authErrorResponse } from "../_shared/auth.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
+
 const GEMINI_KEYS = ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]
   .map((name) => Deno.env.get(name))
   .filter((v): v is string => !!v && v.trim() !== "");
+
+const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// حد سخي بما يكفي ليوم رفع مخزون كامل (مستخدم واحد بيحلل عشرات/مئات
+// القطع ورا بعض) لكن لسه بيمنع استهلاك جامح غير طبيعي للحصة (باج/
+// retry loop لا نهائي مثلاً).
+const RATE_LIMIT = { perMinute: 20, perDay: 800 };
 
 const MODEL_CHAIN = [
   "gemini-3.5-flash-lite",
@@ -56,6 +73,13 @@ Deno.serve(async (req) => {
   try {
     if (GEMINI_KEYS.length === 0) {
       return jsonResponse({ success: false, error: "لا يوجد أي مفتاح Gemini مضبوط على السيرفر" }, 500);
+    }
+
+    const identity = await requireAuth(req);
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const rateLimit = await checkRateLimit(supabase, identity.username, "analyze-part", RATE_LIMIT);
+    if (!rateLimit.allowed) {
+      return jsonResponse({ success: false, error: rateLimit.error }, 429);
     }
 
     const { partNumberOrText, imageBase64 } = await req.json();
@@ -139,8 +163,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ success: false, error: lastError }, 502);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: `خطأ في الخادم: ${e}` }, 500);
+    return authErrorResponse(e);
   }
 });
 

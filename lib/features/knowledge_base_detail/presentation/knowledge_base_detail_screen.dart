@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/knowledge_base_entry.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 
 /// صفحة تفاصيل مستقلة لقطعة من قاعدة المعرفة (الجولة الثالثة، نقطة
 /// ٢٦) — بتفتح من قسم "قاعدة المعرفة" في تبويب "بحث" بس، بتعرض كل
@@ -93,10 +95,11 @@ class _KnowledgeBaseDetailScreenState extends State<KnowledgeBaseDetailScreen> {
         setState(() => _editing = false);
       }
       await _load();
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.logError('KnowledgeBaseDetailScreen._save', e, st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الحفظ: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text(friendlyErrorMessage(e)), backgroundColor: AppColors.danger),
         );
       }
     } finally {

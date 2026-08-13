@@ -8,9 +8,10 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/export_repository.dart';
-import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../auth/presentation/auth_providers.dart';
 
 /// تصدير بيانات النظام كملفات CSV. متاحة لأي مستخدم عنده صلاحية
@@ -26,7 +27,6 @@ class ExportScreen extends ConsumerStatefulWidget {
 
 class _ExportScreenState extends ConsumerState<ExportScreen> {
   final _repo = ExportRepository();
-  final _logRepo = LogRepository();
   final _notifRepo = NotificationRepository();
   final _fieldRepo = FieldPermissionsRepository();
   String? _generatingKey;
@@ -77,11 +77,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       );
 
       final username = ref.read(authControllerProvider)?.username ?? 'unknown';
-      await _logRepo.logAction(
-        actionType: ActionType.export_,
-        username: username,
-        details: 'تصدير تقرير: $fileLabel (${rows.length} صف)',
-      );
+      // TASK-322: الـ audit log بقى بيتسجل من السيرفر نفسه (Edge
+      // Function export-data) — مش من هنا، عشان يفضل موثوق حتى لو
+      // العميل اتعدّل أو فشل يسجّل من ناحيته. النداء اللي كان هنا
+      // اتشال عشان مايبقاش سطرين مكررين لكل عملية تصدير.
       // إشعار مخصص لقاعدة المعرفة بس (نقطة ١١ في قايمة الإشعارات) —
       // باقي التقارير بتتسجل في السجل الموحّد من غير إشعار مستقل ليها.
       if (key == 'kb') {
@@ -90,8 +89,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           message: '$username صدّر قاعدة المعرفة (${rows.length} صف)',
         );
       }
-    } catch (e) {
-      _showSnack('فشل التصدير: $e', isError: true);
+    } catch (e, st) {
+      AppLogger.logError('ExportScreen._export', e, st);
+      _showSnack(friendlyErrorMessage(e), isError: true);
     } finally {
       if (mounted) setState(() => _generatingKey = null);
     }
@@ -108,6 +108,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final token = ref.watch(authControllerProvider.notifier).token;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -117,7 +118,11 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             subtitle: 'كل القطع المسجّلة بكل الحالات',
             icon: Icons.inventory_2_outlined,
             loading: _generatingKey == 'full',
-            onTap: () => _export(key: 'full', fileLabel: 'المخزون_الكامل', fetch: _repo.getFullInventory),
+            onTap: () => _export(
+              key: 'full',
+              fileLabel: 'المخزون_الكامل',
+              fetch: () => _repo.getFullInventory(token: token),
+            ),
           ),
         if (_fieldVisible('available'))
           _ExportTile(
@@ -125,8 +130,11 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             subtitle: 'القطع اللي حالتها "متاح" حالياً',
             icon: Icons.check_circle_outline,
             loading: _generatingKey == 'available',
-            onTap: () =>
-                _export(key: 'available', fileLabel: 'المتاح', fetch: _repo.getAvailableInventory),
+            onTap: () => _export(
+              key: 'available',
+              fileLabel: 'المتاح',
+              fetch: () => _repo.getAvailableInventory(token: token),
+            ),
           ),
         if (_fieldVisible('dispatched'))
           _ExportTile(
@@ -134,8 +142,11 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             subtitle: 'القطع اللي حالتها "صادر"',
             icon: Icons.outbox_outlined,
             loading: _generatingKey == 'dispatched',
-            onTap: () =>
-                _export(key: 'dispatched', fileLabel: 'المصروف', fetch: _repo.getDispatchedInventory),
+            onTap: () => _export(
+              key: 'dispatched',
+              fileLabel: 'المصروف',
+              fetch: () => _repo.getDispatchedInventory(token: token),
+            ),
           ),
         if (_fieldVisible('kb'))
           _ExportTile(
@@ -143,7 +154,11 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             subtitle: 'كل بيانات القطع الفنية المحفوظة',
             icon: Icons.storage_outlined,
             loading: _generatingKey == 'kb',
-            onTap: () => _export(key: 'kb', fileLabel: 'قاعدة_المعرفة', fetch: _repo.getKnowledgeBase),
+            onTap: () => _export(
+              key: 'kb',
+              fileLabel: 'قاعدة_المعرفة',
+              fetch: () => _repo.getKnowledgeBase(token: token),
+            ),
           ),
         if (_fieldVisible('log'))
           _ExportTile(
@@ -151,7 +166,11 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             subtitle: 'كل العمليات المسجّلة من أول يوم',
             icon: Icons.history,
             loading: _generatingKey == 'log',
-            onTap: () => _export(key: 'log', fileLabel: 'سجل_الحركات', fetch: _repo.getTransactionLog),
+            onTap: () => _export(
+              key: 'log',
+              fileLabel: 'سجل_الحركات',
+              fetch: () => _repo.getTransactionLog(token: token),
+            ),
           ),
       ],
     );

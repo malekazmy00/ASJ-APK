@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_session.dart';
+import '../services/app_logger.dart';
 
 /// يدير جدول user_sessions الجديد (المرحلة 3: تتبع جلسات المستخدمين
 /// الفعلية، مش بس last_login).
@@ -10,16 +11,22 @@ class UserSessionRepository {
   /// على Edge Function `open-session` بدل إدراج مباشر، عشان الـ IP
   /// يتقرا من السيرفر (التطبيق نفسه مش عنده وسيلة موثوقة يعرف بيها
   /// عنوان الـ IP بتاعه).
-  Future<int?> openSession(String username, {String? deviceInfo}) async {
+  ///
+  /// TASK-303: الـ username مبقاش بيتبعت في الـ body خالص — الدالة على
+  /// السيرفر بتستخرجه من التوكن الموقّع (x-app-token) نفسه، فمفيش حد
+  /// يقدر يفتح session باسم حساب مش بتاعه.
+  Future<int?> openSession(String token, {String? deviceInfo}) async {
     try {
       final response = await _client.functions.invoke(
         'open-session',
-        body: {'username': username, if (deviceInfo != null) 'deviceInfo': deviceInfo},
+        body: {if (deviceInfo != null) 'deviceInfo': deviceInfo},
+        headers: {'x-app-token': token},
       );
       final data = response.data as Map<String, dynamic>?;
       if (data?['success'] == true) return data?['sessionId'] as int?;
       return null;
-    } catch (_) {
+    } catch (e, st) {
+      AppLogger.logError('UserSessionRepository.openSession', e, st);
       return null;
     }
   }
@@ -37,6 +44,20 @@ class UserSessionRepository {
         .from('user_sessions')
         .update({'logout_at': DateTime.now().toIso8601String()})
         .eq('id', sessionId);
+  }
+
+  /// TASK-310: جلسة detached مش ضمانة (Android ممكن يقتل العملية من
+  /// غير ما يدّي فرصة لـ stop() ينفّذ). بدل ما نثق في logout_at IS NULL
+  /// كدليل إن السيشن لسه شغالة، بننادي RPC بسيطة على السيرفر بتقفل أي
+  /// سيشن last_activity_at بتاعها أقدم من 30 دقيقة ومفيهاش logout_at
+  /// أصلاً — best-effort، بتتنادى بعد كل فتح سيشن جديد وقبل عرض تقارير
+  /// النشاط، عشان البيانات تفضل صحيحة حتى بعد crash/force-kill.
+  Future<void> closeStaleSessions() async {
+    try {
+      await _client.rpc('close_stale_sessions');
+    } catch (e, st) {
+      AppLogger.logError('UserSessionRepository.closeStaleSessions', e, st);
+    }
   }
 
   Future<List<UserSession>> getByUsername(String username, {int limit = 100}) async {

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
+import '../../../core/models/inventory_group.dart';
 import '../../../core/models/inventory_item.dart';
 import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
+import '../../../core/services/app_logger.dart';
+import '../../../core/services/error_messages.dart';
 import '../../../core/widgets/autocomplete_search_field.dart';
 import '../../auth/presentation/auth_providers.dart';
 import 'inventory_group_items_screen.dart';
@@ -32,8 +35,8 @@ class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen>
   Map<String, bool> _fieldOverrides = {};
 
   // بيانات المخزون بشكلَيها (مجمّعة/فردية) — واحد بس بيتحمّل حسب _viewMode
-  List<Map<String, dynamic>> _groups = [];
-  List<Map<String, dynamic>> _filteredGroups = [];
+  List<InventoryGroup> _groups = [];
+  List<InventoryGroup> _filteredGroups = [];
   List<InventoryItem> _individualItems = [];
   List<InventoryItem> _filteredIndividualItems = [];
 
@@ -124,8 +127,9 @@ class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen>
           });
         }
       }
-    } catch (e) {
-      if (mounted) setState(() => _error = 'تعذر تحميل المخزون: $e');
+    } catch (e, st) {
+      AppLogger.logError('InventorySummaryScreen._load', e, st);
+      if (mounted) setState(() => _error = friendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -138,7 +142,7 @@ class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen>
         _filteredGroups = _groups;
       } else {
         _filteredGroups = _groups.where((g) {
-          final name = (g['display_name'] as String?) ?? '';
+          final name = g.displayName;
           return name == q || name.contains(q);
         }).toList();
       }
@@ -498,19 +502,19 @@ class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen>
       itemCount: _filteredGroups.length,
       itemBuilder: (context, index) {
         final g = _filteredGroups[index];
-        final total = g['total_count'] as int? ?? 0;
-        final available = g['available_count'] as int? ?? 0;
-        final brand = g['brand'] as String?;
+        final total = g.totalCount;
+        final available = g.availableCount;
+        final brand = g.brand;
         return Card(
           child: ListTile(
             title: Text(
-              g['display_name'] as String? ?? 'غير محدد',
+              g.displayName,
               textAlign: TextAlign.right,
             ),
             subtitle: Text(
               [
                 if (brand != null && brand.isNotEmpty) brand,
-                g['item_type'] as String? ?? '',
+                g.itemType ?? '',
                 'متاح: $available من إجمالي $total',
               ].where((s) => s.isNotEmpty).join(' • '),
               textAlign: TextAlign.right,
@@ -526,8 +530,8 @@ class _InventorySummaryScreenState extends ConsumerState<InventorySummaryScreen>
               await Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => InventoryGroupItemsScreen(
-                    groupKey: g['group_key'] as String,
-                    displayName: g['display_name'] as String? ?? '',
+                    groupKey: g.groupKey,
+                    displayName: g.displayName,
                   ),
                 ),
               );

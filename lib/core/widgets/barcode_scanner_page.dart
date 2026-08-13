@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_barcode_scanner_plus/flutter_barcode_scanner_plus.dart';
 import '../theme/app_theme.dart';
+import '../services/app_logger.dart';
+import '../services/error_messages.dart';
 
 /// يفتح شاشة سكانر باركود ويرجع أول قيمة يتم مسحها، أو null لو
 /// المستخدم رجع من غير ما يمسح حاجة.
@@ -30,11 +32,12 @@ Future<String?> scanBarcode(BuildContext context) async {
     // بزرار الرجوع من غير ما يمسح حاجة — مش نتيجة مسح فعلية.
     if (result == '-1' || result.isEmpty) return null;
     return result;
-  } catch (e) {
+  } catch (e, st) {
+    AppLogger.logError('scanBarcode', e, st);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('تعذر فتح الكاميرا: $e'),
+          content: Text(friendlyErrorMessage(e)),
           backgroundColor: AppColors.danger,
         ),
       );

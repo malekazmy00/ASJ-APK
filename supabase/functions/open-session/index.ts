@@ -7,16 +7,18 @@
 // بدل إدراج مباشر لجدول user_sessions.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireAuth, authErrorResponse } from "../_shared/auth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
   try {
-    const { username, deviceInfo } = await req.json();
-    if (!username) {
-      return jsonResponse({ success: false, error: "بيانات ناقصة" }, 400);
-    }
+    // TASK-303: الـ username بيتاخد من التوكن الموقّع بس — مش من
+    // الـ body. قبل كده أي حد يعرف الـ endpoint كان يقدر يفتح session
+    // باسم أي مستخدم (حتى admin) بمجرد بعت username في الطلب.
+    const identity = await requireAuth(req);
+    const { deviceInfo } = await req.json();
 
     // x-forwarded-for بيحتوي على IP العميل الحقيقي غالباً كأول قيمة
     // في القايمة (باقي القيم بتاعة أي بروكسي وسيط)
@@ -28,7 +30,7 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from("user_sessions")
       .insert({
-        username,
+        username: identity.username,
         device_info: deviceInfo ?? null,
         ip_address: ip,
       })
@@ -41,8 +43,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ success: true, sessionId: data.id }, 200);
   } catch (e) {
-    console.error(e);
-    return jsonResponse({ success: false, error: `خطأ في الخادم: ${e}` }, 500);
+    return authErrorResponse(e);
   }
 });
 

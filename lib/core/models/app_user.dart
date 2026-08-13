@@ -26,6 +26,13 @@ class AppUser {
   final bool canEdit;
   final String status;
 
+  /// توكن الدخول الموقّع من السيرفر (JWT) — بيثبت الهوية في أي عملية
+  /// حساسة (admin functions, open-session, change-password...). ملحوظة
+  /// مهمة: مش بيتخزن جوه toMap()/SharedPreferences مع باقي بيانات
+  /// اليوزر — بيتخزن بشكل منفصل عبر SecureTokenStorage (Keychain/
+  /// Keystore) لأنه أهم بكتير أمنياً من باقي البيانات دي.
+  final String? token;
+
   const AppUser({
     required this.username,
     required this.role,
@@ -33,9 +40,10 @@ class AppUser {
     this.canTrack = false,
     this.canEdit = false,
     this.status = 'Active',
+    this.token,
   });
 
-  factory AppUser.fromMap(Map<String, dynamic> map) {
+  factory AppUser.fromMap(Map<String, dynamic> map, {String? token}) {
     return AppUser(
       username: map['username'] as String? ?? '',
       role: userRoleFromString(map['role'] as String? ?? 'worker'),
@@ -43,12 +51,26 @@ class AppUser {
       canTrack: map['can_track'] as bool? ?? false,
       canEdit: map['can_edit'] as bool? ?? false,
       status: map['status'] as String? ?? 'Active',
+      token: token,
+    );
+  }
+
+  AppUser copyWithToken(String? newToken) {
+    return AppUser(
+      username: username,
+      role: role,
+      canExport: canExport,
+      canTrack: canTrack,
+      canEdit: canEdit,
+      status: status,
+      token: newToken,
     );
   }
 
   /// لتخزين حالة الدخول محلياً (SharedPreferences) عشان الحساب يفضل
   /// مسجّل دخول حتى بعد إغلاق التطبيق فعلياً، من غير الحاجة لكلمة
   /// المرور تاني — الخروج الوحيد الحقيقي هو زرار الخروج الصريح.
+  /// ملحوظة: التوكن عمداً مش موجود هنا — راجع تعليق `token` فوق.
   Map<String, dynamic> toMap() {
     return {
       'username': username,
