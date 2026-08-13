@@ -489,7 +489,6 @@ class EditDashboardTab extends ConsumerStatefulWidget {
 
 class _EditDashboardTabState extends ConsumerState<EditDashboardTab> {
   final _inventoryRepo = InventoryRepository();
-  final _logRepo = LogRepository();
   final _filterController = TextEditingController();
   String? _statusFilter;
   List<InventoryItem> _items = [];
@@ -673,7 +672,6 @@ class _ItemEditSheet extends StatefulWidget {
 class _ItemEditSheetState extends State<_ItemEditSheet> {
   final _inventoryRepo = InventoryRepository();
   final _knowledgeRepo = KnowledgeBaseRepository();
-  final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
   final _notificationRepo = NotificationRepository();
   final _fieldRepo = FieldPermissionsRepository();
