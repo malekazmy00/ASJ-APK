@@ -6,7 +6,6 @@ import '../../../core/models/inventory_item.dart';
 import '../../../core/models/knowledge_base_entry.dart';
 import '../../../core/repositories/inventory_repository.dart';
 import '../../../core/repositories/knowledge_base_repository.dart';
-import '../../../core/repositories/log_repository.dart';
 import '../../../core/repositories/approval_repository.dart';
 import '../../../core/repositories/notification_repository.dart';
 import '../../../core/repositories/field_permissions_repository.dart';
@@ -38,7 +37,6 @@ class _InventoryItemDetailScreenState
     extends ConsumerState<InventoryItemDetailScreen> {
   final _inventoryRepo = InventoryRepository();
   final _kbRepo = KnowledgeBaseRepository();
-  final _logRepo = LogRepository();
   final _approvalRepo = ApprovalRepository();
   final _notifRepo = NotificationRepository();
   final _fieldRepo = FieldPermissionsRepository();
