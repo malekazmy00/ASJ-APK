@@ -8,4 +8,4 @@
 ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS entry_type VARCHAR(20) DEFAULT 'Part';
-CREATE INDEX IF NOT EXISTS idx_inventory_entry_type ON inventory_items(
+CREATE INDEX IF NOT EXISTS idx_inventory_entry_type ON inventory_items(entry_type);
