@@ -122,10 +122,15 @@ class _AdvancedSearchScreenState extends State<AdvancedSearchScreen> {
               _ResultSection(
                 title: 'سجل الحركات (${_logs.length})',
                 icon: Icons.receipt_long_outlined,
-                items: _logs.map((r) => _ResultTile(
-                      title: '${r['action_type']} — ${r['username'] ?? ''}',
-                      subtitle: r['details']?.toString() ?? '',
-                    )).toList(),
+                items: _logs.map((r) {
+                  final itemId = r['item_id'];
+                  return _ResultTile(
+                    title: '${r['action_type']} — '
+                        '${itemId != null ? 'قطعة #$itemId — ' : ''}'
+                        '${r['username'] ?? ''}',
+                    subtitle: r['details']?.toString() ?? '',
+                  );
+                }).toList(),
               ),
           ],
         ],
