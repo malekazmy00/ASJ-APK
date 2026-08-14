@@ -330,10 +330,11 @@ class _InventoryItemDetailScreenState
     await _approvalRepo.create(
       type: isPartNumber ? ApprovalType.partNumberEdit : ApprovalType.serialEdit,
       payload: {
-        'item_id': _item.itemId,
-        'field': isPartNumber ? 'part_number' : 'serial_number',
-        'old_value': isPartNumber ? _item.partNumber : _item.serialNumber,
-        'new_value': newValue,
+        'itemId': _item.itemId,
+        if (isPartNumber) 'oldPartNumber': _item.partNumber,
+        if (isPartNumber) 'newPartNumber': newValue,
+        if (!isPartNumber) 'oldSerial': _item.serialNumber,
+        if (!isPartNumber) 'newSerial': newValue,
       },
       requestedBy: _username,
     );
