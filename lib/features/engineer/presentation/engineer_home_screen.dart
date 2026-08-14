@@ -784,9 +784,16 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
       final response = await Supabase.instance.client.functions.invoke(
         'analyze-part',
         body: {
-          'partNumberOrText': _partNumberField.text.trim().isNotEmpty
-              ? _partNumberField.text.trim()
-              : 'غير معروف - حلل من الصورة',
+          // لو فيه صورة جديدة، الأولوية للتحليل منها — قبل كده كان
+          // بيبعت رقم القطعة الحالي كنص بحث لو الخانة مش فاضية، فالـ
+          // AI كان بيتوجّه "يأكّد" نفس الرقم القديم بدل ما يقرا اللي
+          // ظاهر فعلياً في الصورة الجديدة، فرقم القطعة كان عمليًا
+          // مبيتغيّرش أبداً مع "إعادة التحليل" حتى لو الصورة فيها رقم
+          // مختلف. رقم القطعة الحالي يتستخدم كنص بحث بس في حالة عدم
+          // وجود صورة (بحث نصي بحت).
+          'partNumberOrText': imageBase64 != null
+              ? 'غير معروف - حلل من الصورة'
+              : _partNumberField.text.trim(),
           if (imageBase64 != null) 'imageBase64': imageBase64,
         },
         headers: widget.token != null ? {'x-app-token': widget.token!} : null,
