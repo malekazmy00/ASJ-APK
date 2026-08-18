@@ -120,7 +120,11 @@ async function notifyIfEnabled(supabase: any, notifType: string, message: string
       .eq("notif_type", notifType)
       .maybeSingle();
     if (setting && setting.enabled === false) return;
-    await supabase.from("admin_notifications").insert({ notif_type: notifType, message });
+    // TASK-018: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/018) — نفس السبب بالظبط في NotificationRepository.create.
+    await supabase
+      .from("admin_notifications")
+      .insert({ notif_type: notifType, message, timestamp: new Date().toISOString() });
   } catch (e) {
     console.error("notifyIfEnabled failed:", e);
   }
