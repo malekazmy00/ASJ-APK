@@ -198,7 +198,8 @@ enum NotificationEventType {
   permissionsChanged('permissions_changed', 'تعديل صلاحيات مستخدم'),
   adminPasswordReset('admin_password_reset', 'إعادة تعيين كلمة مرور (أدمن)'),
   selfPasswordChange('self_password_change', 'تغيير كلمة مرور شخصي'),
-  approvalResolved('approval_resolved', 'الرد على طلب موافقة');
+  approvalResolved('approval_resolved', 'الرد على طلب موافقة'),
+  fieldUpdate('field_update', 'تعديل بيانات أساسية لقطعة');
 
   const NotificationEventType(this.dbValue, this.arabicLabel);
   final String dbValue;
@@ -220,6 +221,7 @@ const Map<String, List<NotificationEventType>> notificationEventGroups = {
     NotificationEventType.returnToStock,
     NotificationEventType.partNumberEdit,
     NotificationEventType.serialEdit,
+    NotificationEventType.fieldUpdate,
   ],
   'البحث والاستعلام': [
     NotificationEventType.newQuery,
