@@ -68,12 +68,18 @@ class InventoryRepository {
       orParts.add('part_number.eq.${pn.replaceAll(',', '')}');
     }
 
+    // TASK-019: item_id بدل created_at — راجع migrations/019_inventory_created_at_fix.sql.
+    // created_at كان بلا DEFAULT (593 من 865 قطعة كانت created_at
+    // بتاعتها NULL)، فأي ترتيب بيه كان بيفقد القطع الأحدث من النتيجة.
+    // item_id (PK متسلسل، مستحيل يبقى NULL) هو نفس منطق getAll()
+    // (تاب الاستيكرات) المستقر أصلاً — وده بيضمن عدم تكرار نفس المشكلة
+    // حتى لو حصل drift تاني في created_at مستقبلاً.
     final rows = await _client
         .from('inventory_items')
         .select()
         .or(orParts.join(','))
         .neq('status', 'Archived')
-        .order('created_at', ascending: false)
+        .order('item_id', ascending: false)
         .limit(100);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
@@ -94,7 +100,9 @@ class InventoryRepository {
     if (searchText != null && searchText.isNotEmpty) {
       q = q.or('part_number.ilike.%$searchText%,location.ilike.%$searchText%');
     }
-    final rows = await q.order('created_at', ascending: false).limit(limit);
+    // TASK-019: نفس التعليل بالظبط اللي فوق في smartSearch — item_id
+    // بدل created_at (راجع migrations/019_inventory_created_at_fix.sql).
+    final rows = await q.order('item_id', ascending: false).limit(limit);
     return (rows as List).map((r) => InventoryItem.fromMap(r)).toList();
   }
 
