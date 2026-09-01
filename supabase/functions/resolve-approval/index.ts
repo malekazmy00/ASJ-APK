@@ -51,11 +51,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === "reject") {
+      // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+      // المضاف في migrations/020).
       await supabase.from("transactions_log").insert({
         item_id: approval.payload?.itemId ?? null,
         action_type: "USER_MGMT",
         username: resolvedBy,
         details: `تم رفض طلب: ${approval.approval_type}`,
+        timestamp: new Date().toISOString(),
       });
       await notifyIfEnabled(
         supabase,
@@ -90,11 +93,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: "نوع طلب غير مدعوم" }, 400);
     }
 
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020).
     await supabase.from("transactions_log").insert({
       item_id: payload.itemId ?? null,
       action_type: "USER_MGMT",
       username: resolvedBy,
       details: `تمت الموافقة على طلب: ${approval.approval_type} (طلبه: ${approval.requested_by})`,
+      timestamp: new Date().toISOString(),
     });
 
     await notifyIfEnabled(

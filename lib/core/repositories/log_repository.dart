@@ -19,11 +19,14 @@ class LogRepository {
     String details = '',
     String? exitType,
   }) async {
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020) — راجع migrations/020_transactions_log_timestamp_fix.sql.
     await _client.from('transactions_log').insert({
       'item_id': itemId,
       'action_type': actionType.dbValue,
       'username': username,
       'details': details,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
       if (exitType != null) 'exit_type': exitType,
     });
   }
