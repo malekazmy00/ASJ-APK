@@ -51,11 +51,15 @@ Deno.serve(async (req) => {
     }
 
     // تسجيل الدخول في اللوج + تحديث last_login (بدون انتظار الفشل يوقف الاستجابة)
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020) — بدون ده كانت كل صفوف LOGIN (100%)
+    // بترجع NULL.
     await supabase.from("transactions_log").insert({
       item_id: null,
       action_type: "LOGIN",
       username: user.username,
       details: "تسجيل دخول",
+      timestamp: new Date().toISOString(),
     });
     await supabase
       .from("users")

@@ -73,11 +73,14 @@ Deno.serve(async (req) => {
     // بنقفل سجلات الجلسات المفتوحة (للتقارير/العرض في لوحة الأدمن).
     await supabase.rpc("revoke_all_sessions", { p_username: username });
 
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020).
     await supabase.from("transactions_log").insert({
       item_id: null,
       action_type: "UPDATE",
       username,
       details: "تغيير كلمة المرور الشخصية",
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true }, 200);

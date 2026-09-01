@@ -74,11 +74,14 @@ Deno.serve(async (req) => {
 
     // Audit مستقل عن أي تسجيل بيعمله العميل من ناحيته — يوثّق مين
     // صدّر ايه وكام صف، من غير ما يعتمد على إن العميل نجح يسجّله.
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020).
     await supabase.from("transactions_log").insert({
       item_id: null,
       action_type: "EXPORT",
       username: identity.username,
       details: `تصدير: ${dataset} (${data?.length ?? 0} صف)`,
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true, rows: data }, 200);

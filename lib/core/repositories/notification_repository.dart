@@ -33,9 +33,14 @@ class NotificationRepository {
   }) async {
     final enabled = await _isTypeEnabled(notifType);
     if (!enabled) return;
+    // TASK-018: نحدد timestamp صراحة من العميل كمان (defense-in-depth
+    // فوق DEFAULT now() المضاف في migrations/018) — عشان أي إشعار
+    // بيتسجل من هنا (مش من الـ RPCs) ميرجعش يطلع بـ NULL لو الـ DEFAULT
+    // اتشال بالغلط لأي سبب مستقبلاً.
     await _client.from('admin_notifications').insert({
       'message': message,
       'notif_type': notifType,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
       if (relatedId != null) 'related_id': relatedId,
     });
   }

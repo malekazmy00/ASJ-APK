@@ -56,11 +56,14 @@ Deno.serve(async (req) => {
     // تلقائياً (راجع requireAuth)، وبنقفل سجلات جلساته المفتوحة كمان.
     await supabase.rpc("revoke_all_sessions", { p_username: username });
 
+    // TASK-020: timestamp صراحة (defense-in-depth فوق DEFAULT now()
+    // المضاف في migrations/020).
     await supabase.from("transactions_log").insert({
       item_id: null,
       action_type: "USER_MGMT",
       username,
       details: `إعادة تعيين كلمة المرور بواسطة الأدمن (${admin.username})`,
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true }, 200);
