@@ -1,6 +1,6 @@
 # Supabase recovery review — 3 October 2026
 
-The recovery project is `qdbisozoknncbqtgsmpc` in the free ASJ Recovery organization. Its database was restored from the 29 September backup, including 958 inventory items, 25,440 knowledge records, five application users, storage bucket metadata, and application migration history. GitHub integration points to `malekazmy00/ASJ-APK`; automatic production deployment and preview branches are disabled during recovery.
+The recovery project is `qdbisozoknncbqtgsmpc` in the free ASJ Recovery organization. Its database was restored from the 29 September backup, including 958 inventory items, 25,440 knowledge records, five application users, storage bucket metadata, and application migration history. The backup contained no storage objects. GitHub integration points to `malekazmy00/ASJ-APK`; automatic production deployment and preview branches are disabled during recovery.
 
 ## Changes prepared
 
@@ -12,12 +12,12 @@ The recovery project is `qdbisozoknncbqtgsmpc` in the free ASJ Recovery organiza
 - Make the grouped inventory view use its caller's permissions.
 - Recover the four production migrations missing from this repository, preserving their real recorded versions. Preserve explicit timestamps in the deployed Edge Function behavior.
 
-The database permission migration has been applied to the recovery project. Application and Edge Function changes must still be deployed.
+The database permission migration and all 15 Edge Functions are deployed to the recovery project. A new `APP_JWT_SECRET` is configured there; existing app sessions must sign in again. No Gemini API key was available during recovery, so AI-backed search and analysis need those keys before use.
 
 ## Required before building a release APK
 
 1. Resolve database authorization: the original app intentionally uses custom JWTs and direct anonymous PostgREST calls. The new database has RLS enabled on every application table, with no policies, so those direct calls currently cannot access its rows. Merely switching URL/key or adding policies that allow everyone would not provide account authorization. Adapt authenticated data access before declaring the app operational.
-2. Deploy all 15 Edge Functions and configure a strong `APP_JWT_SECRET`. Old secret values are not in database backups. Gemini keys must be supplied separately if AI features are needed.
+2. Add the Gemini API keys to the recovery project if AI-backed search and analysis are required.
 3. Set Codemagic's `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the new project. The existing APK keeps the URL embedded when it was built and needs replacement.
 4. Confirm Android signing continuity with the existing APK. This repository generates Android files with `flutter create`; it does not configure a persistent release keystore. A build with a different certificate cannot update an already installed APK.
 5. Reconcile the legacy manually applied migrations before enabling automated database deployment; historical database versions do not cover every `000`–`017` source file.
@@ -28,5 +28,6 @@ The database permission migration has been applied to the recovery project. Appl
 - Four session identity tests pass, including demotion, suspension/deletion, password revocation, and malformed account data.
 - Database checks confirm sensitive RPCs are unavailable to `anon` and remain callable by `service_role`.
 - Restore row counts match the backup for every imported application table.
-- Flutter analysis is pending while the local SDK dependencies are being installed. No APK build or device test has been performed.
+- All 15 Edge Functions are active in the recovery project, and `APP_JWT_SECRET` is present in its secret list.
+- Flutter analysis is incomplete because the local SDK dependencies could not be restored. No APK build or device test has been performed.
 
