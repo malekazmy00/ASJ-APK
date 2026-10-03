@@ -79,6 +79,7 @@ Deno.serve(async (req) => {
       action_type: "EXPORT",
       username: identity.username,
       details: `تصدير: ${dataset} (${data?.length ?? 0} صف)`,
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true, rows: data }, 200);
@@ -93,3 +94,4 @@ function jsonResponse(body: unknown, status: number) {
     headers: { "Content-Type": "application/json" },
   });
 }
+

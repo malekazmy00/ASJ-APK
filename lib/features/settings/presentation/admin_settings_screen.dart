@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/enums.dart';
 import '../../../core/repositories/notification_repository.dart';
+import '../../auth/presentation/auth_providers.dart';
 
 /// إعدادات الأدمن: فحص حالة الاتصال بـ Gemini + تشغيل/إيقاف كل نوع
 /// إشعار لوحده.
@@ -59,11 +60,17 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
       _geminiOk = null;
     });
     try {
-      final response = await Supabase.instance.client.functions.invoke('gemini-status');
+      final token = ref.read(authControllerProvider.notifier).token;
+      if (token == null) throw StateError('No active session');
+      final response = await Supabase.instance.client.functions.invoke(
+        'gemini-status',
+        headers: {'x-app-token': token},
+      );
+      if (!mounted) return;
       final data = response.data as Map<String, dynamic>?;
       setState(() => _geminiOk = data?['success'] == true);
     } catch (e) {
-      setState(() => _geminiOk = false);
+      if (mounted) setState(() => _geminiOk = false);
     } finally {
       if (mounted) setState(() => _checkingGemini = false);
     }
@@ -170,3 +177,4 @@ class _SectionCard extends StatelessWidget {
     );
   }
 }
+

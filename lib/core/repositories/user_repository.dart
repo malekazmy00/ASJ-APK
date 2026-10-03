@@ -7,7 +7,10 @@ class UserRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   Future<List<AppUser>> getAll() async {
-    final rows = await _client.from('users').select().order('username');
+    final rows = await _client
+        .from('users')
+        .select('username,role,can_export,can_track,can_edit,status')
+        .order('username');
     return (rows as List).map((r) => AppUser.fromMap(r)).toList();
   }
 
@@ -66,3 +69,4 @@ class UserRepository {
         .eq('tab_id', tabId);
   }
 }
+

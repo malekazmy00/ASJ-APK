@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
         action_type: "USER_MGMT",
         username: resolvedBy,
         details: `تم رفض طلب: ${approval.approval_type}`,
+        timestamp: new Date().toISOString(),
       });
       await notifyIfEnabled(
         supabase,
@@ -95,6 +96,7 @@ Deno.serve(async (req) => {
       action_type: "USER_MGMT",
       username: resolvedBy,
       details: `تمت الموافقة على طلب: ${approval.approval_type} (طلبه: ${approval.requested_by})`,
+      timestamp: new Date().toISOString(),
     });
 
     await notifyIfEnabled(
@@ -120,7 +122,11 @@ async function notifyIfEnabled(supabase: any, notifType: string, message: string
       .eq("notif_type", notifType)
       .maybeSingle();
     if (setting && setting.enabled === false) return;
-    await supabase.from("admin_notifications").insert({ notif_type: notifType, message });
+    await supabase.from("admin_notifications").insert({
+      notif_type: notifType,
+      message,
+      timestamp: new Date().toISOString(),
+    });
   } catch (e) {
     console.error("notifyIfEnabled failed:", e);
   }
@@ -129,3 +135,4 @@ async function notifyIfEnabled(supabase: any, notifType: string, message: string
 function jsonResponse(body: unknown, status: number) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
+
