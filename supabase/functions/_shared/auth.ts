@@ -25,7 +25,8 @@
 // موقّع من السيرفر نفسه في كل مرة، مش من بيانات محلية على الجهاز).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { SignJWT, jwtVerify } from "npm:jose@5";
+import { jwtVerify, SignJWT } from "npm:jose@5";
+import { type AppRole, sessionIdentity } from "./session_identity.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -40,9 +41,14 @@ if (!secret) {
     "APP_JWT_SECRET غير موجود في متغيرات البيئة — لازم يتضاف كـ secret على المشروع قبل استخدام التوكن",
   );
 }
-const secretKey = () => new TextEncoder().encode(secret ?? "");
+const secretKey = () => {
+  if (!secret || new TextEncoder().encode(secret).length < 32) {
+    throw new AuthError("إعداد تسجيل الدخول غير مكتمل على الخادم", 503);
+  }
+  return new TextEncoder().encode(secret);
+};
 
-export type AppRole = "worker" | "engineer" | "admin";
+export type { AppRole } from "./session_identity.ts";
 
 export interface AppTokenPayload {
   username: string;
@@ -78,8 +84,8 @@ export class AuthError extends Error {
 /// آخر تغيير لكلمة مرور الحساب ده (TASK-309) — لو الباسورد اتغيّر
 /// (سواء المستخدم نفسه أو الأدمن)، أي توكن قديم أُصدر قبل التغيير بقى
 /// مرفوض تلقائياً هنا، حتى لو توقيعه سليم شكلياً ولسه في مدة الـ 30
-/// يوم. يرجّع {username, role} المستخرجة من التوكن نفسه (مش من الـ
-/// body) أو يرمي AuthError (401) لو مفيش توكن أو باظ/منتهي/اتلغى.
+/// يوم. الاسم يأتي من التوكن الموقّع، والدور والحالة من الحساب الحالي
+/// في قاعدة البيانات. فشل قراءة الحساب يرفض الطلب ولا يتجاوز التحقق.
 export async function requireAuth(req: Request): Promise<AppTokenPayload> {
   const token = req.headers.get("x-app-token");
   if (!token) {
@@ -89,7 +95,9 @@ export async function requireAuth(req: Request): Promise<AppTokenPayload> {
   let role: AppRole | undefined;
   let issuedAt: number | undefined;
   try {
-    const { payload } = await jwtVerify(token, secretKey());
+    const { payload } = await jwtVerify(token, secretKey(), {
+      algorithms: ["HS256"],
+    });
     username = payload.username as string | undefined;
     role = payload.role as AppRole | undefined;
     issuedAt = payload.iat as number | undefined;
@@ -101,39 +109,32 @@ export async function requireAuth(req: Request): Promise<AppTokenPayload> {
     throw new AuthError("جلسة منتهية أو غير صالحة — سجّل الدخول تاني", 401);
   }
 
-  const stillValid = await _issuedAfterLastPasswordChange(username, issuedAt);
-  if (!stillValid) {
-    throw new AuthError("كلمة المرور اتغيّرت — سجّل الدخول تاني", 401);
-  }
-
-  return { username, role };
+  return await _currentIdentity(username, issuedAt);
 }
 
 /// TASK-309: مقارنة وقت إصدار التوكن (iat) بآخر وقت اتغيّرت فيه كلمة
 /// مرور الحساب (users.password_changed_at). لو الحساب مالوش قيمة
 /// مسجّلة بعد (عمود جديد، قيمته null لحد أول تغيير فعلي)، التوكن يُعتبر
 /// سليم — مفيش تغيير حصل أصلاً بعد آخر إصدار.
-async function _issuedAfterLastPasswordChange(
+async function _currentIdentity(
   username: string,
   issuedAtSeconds: number,
-): Promise<boolean> {
+): Promise<AppTokenPayload> {
   try {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("users")
-      .select("password_changed_at")
+      .select("role, status, password_changed_at")
       .eq("username", username)
       .maybeSingle();
-    const changedAt = data?.password_changed_at
-      ? new Date(data.password_changed_at as string).getTime()
-      : 0;
-    return issuedAtSeconds * 1000 >= changedAt;
+    if (error) throw new AuthError("تعذر التحقق من الجلسة الآن", 503);
+    const identity = sessionIdentity(username, issuedAtSeconds, data);
+    if (!identity) throw new AuthError("جلسة غير صالحة — سجّل الدخول تاني", 401);
+    return identity;
   } catch (e) {
-    // فشل الفحص نفسه (مثلاً مشكلة اتصال بالداتابيز) ما ينفعش يبقى
-    // سبب لرفض توكن سليم — نسيبه يعدي، التحقق من التوقيع والانتهاء
-    // نفسه لسه تم بنجاح فوق.
+    if (e instanceof AuthError) throw e;
     console.error("password_changed_at check failed:", e);
-    return true;
+    throw new AuthError("تعذر التحقق من الجلسة الآن", 503);
   }
 }
 
@@ -160,8 +161,12 @@ export function authErrorResponse(e: unknown): Response {
     });
   }
   console.error(e);
-  return new Response(JSON.stringify({ success: false, error: "خطأ في الخادم" }), {
-    status: 500,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ success: false, error: "خطأ في الخادم" }),
+    {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
+

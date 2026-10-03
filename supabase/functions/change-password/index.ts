@@ -78,6 +78,7 @@ Deno.serve(async (req) => {
       action_type: "UPDATE",
       username,
       details: "تغيير كلمة المرور الشخصية",
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true }, 200);
@@ -92,3 +93,4 @@ function jsonResponse(body: unknown, status: number) {
     headers: { "Content-Type": "application/json" },
   });
 }
+

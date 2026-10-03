@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
       action_type: "LOGIN",
       username: user.username,
       details: "تسجيل دخول",
+      timestamp: new Date().toISOString(),
     });
     await supabase
       .from("users")
@@ -85,3 +86,4 @@ function jsonResponse(body: unknown, status: number) {
     headers: { "Content-Type": "application/json" },
   });
 }
+

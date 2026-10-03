@@ -61,6 +61,7 @@ Deno.serve(async (req) => {
       action_type: "USER_MGMT",
       username,
       details: `إعادة تعيين كلمة المرور بواسطة الأدمن (${admin.username})`,
+      timestamp: new Date().toISOString(),
     });
 
     return jsonResponse({ success: true }, 200);
@@ -75,3 +76,4 @@ function jsonResponse(body: unknown, status: number) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
